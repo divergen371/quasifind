@@ -2,12 +2,21 @@ open Yojson.Safe
 
 type fuzzy_finder = Auto | Fzf | Builtin [@@deriving show, eq]
 
+type rule_source_type = Extensions | Filenames [@@deriving show, eq]
+
+type rule_source_def = {
+  name : string;
+  url : string;
+  kind : rule_source_type;
+} [@@deriving show, eq]
+
 type t = {
   fuzzy_finder : fuzzy_finder;
   ignore : string list;
   email : string option;
   webhook_url : string option;
   slack_url : string option;
+  rule_sources : rule_source_def list;
 } [@@deriving show, eq]
 
 let default = {
@@ -16,6 +25,19 @@ let default = {
   email = None;
   webhook_url = None;
   slack_url = None;
+  rule_sources = [
+    {
+      name = "Generated: Suspicious WebShell Attributes";
+      url = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/web-extensions.txt";
+      kind = Extensions;
+    };
+    {
+      name = "Generated: Common Sensitive Files";
+      (* Using SecLists quickhits for sensitive/config files *)
+      url = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/quickhits.txt";
+      kind = Filenames;
+    }
+  ];
 }
 
 let fuzzy_finder_of_string = function
@@ -46,7 +68,19 @@ let t_of_json json =
     try to_option to_string (member "slack_url" json)
     with _ -> None
   in
-  { fuzzy_finder; ignore; email; webhook_url; slack_url }
+  let rule_sources =
+    try 
+      member "rule_sources" json 
+      |> to_list 
+      |> List.map (fun j ->
+           let name = member "name" j |> to_string in
+           let url = member "url" j |> to_string in
+           let kind = match member "kind" j |> to_string with "extensions" -> Extensions | _ -> Filenames in
+           { name; url; kind }
+         )
+    with _ -> default.rule_sources
+  in
+  { fuzzy_finder; ignore; email; webhook_url; slack_url; rule_sources }
 
 let get_config_dir () =
   let home = Sys.getenv "HOME" in
@@ -68,6 +102,11 @@ let t_to_json t =
     ("email", match t.email with Some s -> `String s | None -> `Null);
     ("webhook_url", match t.webhook_url with Some s -> `String s | None -> `Null);
     ("slack_url", match t.slack_url with Some s -> `String s | None -> `Null);
+    ("rule_sources", `List (List.map (fun s -> `Assoc [
+      ("name", `String s.name);
+      ("url", `String s.url);
+      ("kind", `String (match s.kind with Extensions -> "extensions" | Filenames -> "filenames"));
+    ]) t.rule_sources));
   ]
 
 let save_default path =

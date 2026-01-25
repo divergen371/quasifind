@@ -165,6 +165,17 @@ quasifind . 'true' -d 2
 quasifind / --suspicious --stealth
 ```
 
+#### ルール自動更新と外部インテリジェンス (`--update-rules`)
+
+Quasifind は、外部の信頼できるセキュリティリスト（SecLists など）から最新の脅威情報（WebShellの拡張子リストや危険なファイル名リスト）を取得し、**自動的に検知ルールに変換して取り込む**機能を持っています。
+
+```bash
+# 最新のルールを取得して更新
+quasifind --update-rules
+```
+
+これにより、手動で複雑な正規表現を書かなくても、コミュニティの知見を活用した検知が可能になります。更新されたルールは `~/.config/quasifind/rules.json` に保存され、`--suspicious` モード実行時に自動的に適用されます。
+
 ### オプション
 
 - `-d DEPTH`, `--max-depth=DEPTH`: 探索する最大深度を指定します。
@@ -182,6 +193,7 @@ quasifind / --suspicious --stealth
 - `--stealth`: ステルスモード。プロセス名を偽装し、ファイルアクセス痕跡（atime）を消去します。
 - `--suspicious`: 怪しいファイルを自動検出するプリセットモードです。
 - `--check-ghost`: Ghostファイル（削除済みだが開かれているファイル）を検出します。
+- `--update-rules`: 信頼できる外部ソースから最新の検出ルールをダウンロード・更新します。
 - `--log=FILE`: ウォッチモード等のイベントログをファイルに出力します。
 - `--webhook=URL`: イベント発生時に指定URLへPOSTリクエストを送信します。
 - `--email=ADDR`: イベント発生時にメールを送信します（要sendmail）。
@@ -205,18 +217,31 @@ quasifind / --suspicious --stealth
 
 `~/.config/quasifind/config.json` (または `XDG_CONFIG_HOME/quasifind/config.json`) に設定ファイルを配置することで、動作をカスタマイズできます。
 
+**※ 初回実行時に、自動的にデフォルト設定ファイルが生成されます。**
+
 ```json
 {
-  "fuzzy_finder": "auto", // "auto", "fzf", "builtin"
-  "ignore": ["_build", ".git", "node_modules", "**/*.o"]
+  "fuzzy_finder": "auto",
+  "ignore": ["_build", ".git", "node_modules", "**/*.o"],
+  "email": "alert@example.com",
+  "webhook_url": "https://example.com/hook",
+  "slack_url": "https://hooks.slack.com/services/...",
+  "rule_sources": [
+    {
+      "name": "SecLists Web Extensions",
+      "url": "https://raw.githubusercontent.com/.../web-extensions.txt",
+      "kind": "extensions"
+    }
+  ]
 }
 ```
 
-- **fuzzy_finder**: ヒストリ検索時のファジーファインダーを指定します。
-  - `auto`: `fzf` がインストールされていれば使用し、なければ内蔵機能を使用します（デフォルト）。
-  - `fzf`: 強制的に `fzf` を使用します。
-  - `builtin`: 内蔵の簡易検索機能を使用します。
-- **ignore**: 検索から常に除外するパターン（Glob形式）のリストです。隠しファイル設定 (`--hidden`) よりも優先されません（隠しファイルかつignore対象の場合は除外されます）。
+- **fuzzy_finder**: ヒストリ検索時のファジーファインダーを指定します (`auto` / `fzf` / `builtin`)。
+- **ignore**: 検索から常に除外するパターン（Glob形式）のリストです。
+- **email**: Watchモード通知用のメールアドレス（デフォルト: `null`）。指定すると `--email` 未指定時にも通知が飛びます。
+- **webhook_url**: 通知用 Webhook URL（デフォルト: `null`）。
+- **slack_url**: Slack 通知用 Webhook URL（デフォルト: `null`）。
+- **rule_sources**: `--update-rules` 実行時に参照する外部ソースのリスト。`kind` には `"extensions"` (拡張子リスト) または `"filenames"` (ファイル名リスト) を指定します。
 
 ## シェル連携 (Shell Integration)
 

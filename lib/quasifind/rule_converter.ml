@@ -27,43 +27,26 @@ let list_to_regex_alt items =
   |> List.map Re.Pcre.quote (* Escape special chars *)
   |> String.concat "|"
 
-(* Sources definition *)
-type source_type = Extensions | Filenames
-
-type source_def = {
-  name : string;
-  url : string;
-  kind : source_type;
-}
-
-(* Pre-defined trustworthy sources (Concepts/Demos) *)
-(* Note: In a real scenario, these would be robust URLs from SecLists or similar *)
-let sources = [
-  {
-    name = "Generated: Suspicious WebShell Attributes";
-    (* Using SecLists common web extensions as a reliable source *)
-    url = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/web-extensions.txt";
-    kind = Extensions;
-  }
-]
+(* Obsolete internal source definitions - moved to Config *)
 
 (* The converter function *)
 let update_from_source () =
-  Printf.printf "Fetching external security lists...\n%!";
+  let config = Config.load () in
+  Printf.printf "Fetching external security lists (%d sources)...\n%!" (List.length config.rule_sources);
   
   let generated_rules = 
-    List.fold_left (fun acc source ->
+    List.fold_left (fun acc (source : Config.rule_source_def) ->
       Printf.printf "Fetching %s from %s...\n%!" source.name source.url;
       match fetch_url source.url with
       | Ok items ->
           (match source.kind with
-           | Extensions ->
+           | Config.Extensions ->
                let rule = {
                  Rule_loader.name = source.name;
                  expr = Printf.sprintf "name =~ /\\.(%s)$/" (list_to_regex_alt items)
                } in
                rule :: acc
-           | Filenames ->
+           | Config.Filenames ->
                let rule = {
                  Rule_loader.name = source.name;
                  expr = Printf.sprintf "name =~ /^(%s)$/" (list_to_regex_alt items)
@@ -73,7 +56,7 @@ let update_from_source () =
       | Error msg ->
           Printf.eprintf "Warning: %s. Using fallback/skipped.\n%!" msg;
           acc
-    ) [] sources
+    ) [] config.rule_sources
   in
 
   if generated_rules = [] then
