@@ -4,6 +4,7 @@ module Exec = Exec
 module History = History
 module Fuzzy_matcher = Fuzzy_matcher
 module Interactive = Interactive
+module Config = Config
 module Typed = Typed
 module Typecheck = Typecheck
 module Eval = Eval

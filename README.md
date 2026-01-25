@@ -147,6 +147,23 @@ quasifind . 'true' -d 2
 - 先頭が `test_` で始まる: `name =~ /^test_/`
 - 特定ディレクトリ `_build` を含まないパス: `path =~ /^(?!.*_build\/).*$/` (否定先読みなどが使えるかは `re` の PCRE サポート状況に依存しますが、基本的な互換性はあります)
 
+## 設定ファイル (Configuration)
+
+`~/.config/quasifind/config.json` (または `XDG_CONFIG_HOME/quasifind/config.json`) に設定ファイルを配置することで、動作をカスタマイズできます。
+
+```json
+{
+  "fuzzy_finder": "auto", // "auto", "fzf", "builtin"
+  "ignore": ["_build", ".git", "node_modules", "**/*.o"]
+}
+```
+
+- **fuzzy_finder**: ヒストリ検索時のファジーファインダーを指定します。
+  - `auto`: `fzf` がインストールされていれば使用し、なければ内蔵機能を使用します（デフォルト）。
+  - `fzf`: 強制的に `fzf` を使用します。
+  - `builtin`: 内蔵の簡易検索機能を使用します。
+- **ignore**: 検索から常に除外するパターン（Glob形式）のリストです。隠しファイル設定 (`--hidden`) よりも優先されません（隠しファイルかつignore対象の場合は除外されます）。
+
 ## ライセンス
 
 MIT License

@@ -10,7 +10,8 @@
   exec
   history
   fuzzy_matcher
-  interactive)
+  interactive
+  config)
  (libraries angstrom re eio eio_main yojson)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))

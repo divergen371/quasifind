@@ -43,6 +43,7 @@ let test_dfs () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
+      ignore = [];
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -61,6 +62,7 @@ let test_parallel () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
+      ignore = [];
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -79,6 +81,7 @@ let test_filtering () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
+      ignore = [];
     } in
     (* Custom collect function with filtering enabled, mimicking main.ml *)
     let paths = ref [] in
@@ -123,6 +126,7 @@ let test_hidden_flag () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
+      ignore = [];
     } in
     let paths_def = collect_paths cfg_default root in
     let contains s paths = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -136,6 +140,7 @@ let test_hidden_flag () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = true;
+      ignore = [];
     } in
     let paths_inc = collect_paths cfg_include root in
     

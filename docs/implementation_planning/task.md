@@ -40,3 +40,8 @@
   - [x] 実行時に履歴を保存する処理の統合 (`main.ml`) <!-- id: 62 -->
   - [x] 履歴検索コマンド (`history` / `search`) の実装 <!-- id: 63 -->
   - [x] ファジー検索の実装 (または `fzf` 等へのパイプライン提供) <!-- id: 64 -->
+
+- [x] **Phase 8: 設定ファイル (Configuration)** <!-- id: 70 -->
+  - [x] 設定ローダー (`Config`) の実装 (`~/.config/quasifind/config.json`) <!-- id: 71 -->
+  - [x] ファジー検索の選択設定 (`auto`, `builtin`, `fzf`) <!-- id: 72 -->
+  - [x] 除外パターン (`ignore`) の実装と `Traversal` への適用 <!-- id: 73 -->

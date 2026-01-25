@@ -11,6 +11,7 @@ type config = {
   max_depth : int option;
   follow_symlinks : bool;
   include_hidden : bool;
+  ignore : string list;
 }
 
 type plan = {
@@ -41,6 +42,16 @@ end
 
 (* ... *)
 
+let should_ignore cfg name =
+  (* Check hidden *)
+  if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then true
+  else
+    (* Check ignore list using Glob *)
+    List.exists (fun pattern ->
+      let re = Re.Glob.glob pattern |> Re.compile in
+      Re.execp re name
+    ) cfg.ignore
+
 let rec visit (cfg : config) depth emit dir_path =
   match cfg.max_depth with
   | Some max_d when depth >= max_d -> ()
@@ -49,8 +60,7 @@ let rec visit (cfg : config) depth emit dir_path =
     | entries ->
       Array.iter (fun name ->
         if name <> "." && name <> ".." then
-          (* Check hidden *)
-          if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then ()
+          if should_ignore cfg name then ()
           else
             let full_path = Filename.concat dir_path name in
             try
@@ -91,7 +101,7 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
         | entries ->
           Array.iter (fun name ->
             if name <> "." && name <> ".." then
-              if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then ()
+              if should_ignore cfg name then ()
               else
                 let full_path = Filename.concat dir_path name in
                 try

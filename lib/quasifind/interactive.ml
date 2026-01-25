@@ -169,12 +169,27 @@ module TUI = struct
       raise e
 end
 
-let select ?(query="") candidates =
+let select ?(query="") ?(finder=Config.Auto) candidates =
   if not (is_atty ()) then (
     Printf.eprintf "Interactive selection requires a terminal.\n";
     None
   ) else
-  if check_fzf_availability () then
-    run_fzf candidates
+  let use_fzf = 
+    match finder with
+    | Config.Fzf -> true
+    | Config.Builtin -> false
+    | Config.Auto -> check_fzf_availability ()
+  in
+  
+  if use_fzf then
+    if check_fzf_availability () then
+      run_fzf candidates
+    else (
+      (* If forced Fzf but not found, warn and fallback? or error? 
+         User requested Fzf explicitly. Error or warning + fallback.
+         Let's fallback with warning. *)
+      if finder = Config.Fzf then Printf.eprintf "Warning: fzf not found, falling back to builtin TUI.\n";
+      TUI.loop candidates
+    )
   else
     TUI.loop candidates
