@@ -22,24 +22,70 @@ dune install
 quasifind [DIR] "EXPR" [OPTIONS]
 ```
 
-### 例
+### 使用例 (Cookbook)
 
-カレントディレクトリから、名前が `.log` で終わるファイルを検索:
+#### 基本的な検索
+
+カレントディレクトリから、名前が `.log` で終わるファイルを検索（正規表現）:
 
 ```bash
 quasifind . 'name =~ /\.log$/'
 ```
 
-`src` ディレクトリ以下の、サイズが 10MB 以上かつ更新が 7 日以内のファイルを検索:
+サイズが 10MB 以上かつ更新が 7 日以内のファイルを検索:
 
 ```bash
-quasifind src 'size > 10MB && mtime < 7d'
+quasifind . 'size > 10MB && mtime < 7d'
 ```
 
-1GB 以上のファイルを並列度 4 で検索:
+#### 高度な検索
+
+`_build` ディレクトリを除外して検索（パスに対する正規表現）:
 
 ```bash
-quasifind /data 'size >= 1GB' -j 4
+quasifind . 'name == "main.exe" && path =~ /^(?!.*_build\/)/'
+```
+
+※ 注: 隠しファイル（`.`で始まる）はデフォルトで除外されます。`_build` は隠しファイルではないため、上記のように正規表現で弾くか、無視リスト機能（将来実装予定）を待ちます。
+
+ファイルタイプを指定して検索（ディレクトリのみ）:
+
+```bash
+quasifind . 'type == dir && name =~ /^test_/'
+```
+
+#### コマンド実行
+
+見つかった各ファイルに対して `ls -l` を実行（`{}` はパスに置換されます）:
+
+```bash
+quasifind . 'size > 1MB' -x "ls -l {}"
+```
+
+見つかった全てのログファイルをまとめて `tar` で圧縮（バッチ実行）:
+
+```bash
+quasifind . 'name =~ /\.log$/' -X "tar czf logs.tar.gz {}"
+```
+
+#### オプション活用
+
+隠しファイルも含めて検索（`--hidden` / `-H`）:
+
+```bash
+quasifind . 'name == ".gitignore"' -H
+```
+
+並列度 8 で高速に検索（`-j`）:
+
+```bash
+quasifind /data 'size > 1GB' -j 8
+```
+
+探索深さを 2 階層までに制限（`-d`）:
+
+```bash
+quasifind . 'true' -d 2
 ```
 
 ### オプション
