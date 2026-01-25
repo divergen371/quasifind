@@ -45,6 +45,7 @@ let test_dfs () =
       include_hidden = false;
       ignore = [];
       preserve_timestamps = false;
+      spawn = None;
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -65,6 +66,7 @@ let test_parallel () =
       include_hidden = false;
       ignore = [];
       preserve_timestamps = false;
+      spawn = None;
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -85,6 +87,7 @@ let test_filtering () =
       include_hidden = false;
       ignore = [];
       preserve_timestamps = false;
+      spawn = None;
     } in
     (* Custom collect function with filtering enabled, mimicking main.ml *)
     let paths = ref [] in
@@ -131,6 +134,7 @@ let test_hidden_flag () =
       include_hidden = false;
       ignore = [];
       preserve_timestamps = false;
+      spawn = None;
     } in
     let paths_def = collect_paths cfg_default root in
     let contains s paths = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -146,6 +150,7 @@ let test_hidden_flag () =
       include_hidden = true;
       ignore = [];
       preserve_timestamps = false;
+      spawn = None;
     } in
     let paths_inc = collect_paths cfg_include root in
     

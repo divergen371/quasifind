@@ -39,16 +39,20 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
   | None ->
       (* Prepare configuration and runner *)
       let config = Config.load () in
-      let concurrency = match jobs with | None -> 1 | Some n -> n in
-      let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
-      let ignore_patterns = config.ignore @ exclude in
-      let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode } in
+      (* cfg construction moved inside run_logic to access domain_mgr *)
 
       (* Common execution logic *)
       let run_logic typed_ast =
         Eio_main.run @@ fun _env ->
         let now = Unix.gettimeofday () in
         let mgr = Eio.Stdenv.process_mgr _env in
+        let domain_mgr = Eio.Stdenv.domain_mgr _env in
+        let spawn_fn = fun f -> Eio.Domain_manager.run domain_mgr f in
+        
+        let concurrency = match jobs with | None -> 1 | Some n -> n in
+        let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
+        let ignore_patterns = config.ignore @ exclude in
+        let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode; spawn = Some spawn_fn } in
         
         let batch_paths = ref [] in
         let all_found_paths = ref [] in

@@ -46,3 +46,6 @@ _build/
 # Specstory files
 *.specstory
 compile_commands.json
+
+# Benchmarks
+bench/results/
