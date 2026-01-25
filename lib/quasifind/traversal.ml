@@ -197,15 +197,24 @@ let with_timestamps_preserved path preserve f =
   else
     f ()
 
-(* Helper to read directory entries as a Seq *)
-let readdir_seq dir_path preserve : string Seq.t =
+(* Helper to read directory entries with type *)
+let readdir_typed dir_path preserve : (string * Dirent.kind) list =
   with_timestamps_preserved dir_path preserve (fun () ->
-    match Sys.readdir dir_path with
-    | entries -> Array.to_seq entries
-    | exception Sys_error msg ->
-        Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path msg;
-        Seq.empty
+    try Dirent.readdir dir_path
+    with Unix.Unix_error (e, _, _) ->
+        Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path (Unix.error_message e);
+        []
   )
+
+(* Optimization Logic: Returns TRUE if we can skip processing this entry *)
+let can_skip_stat (planner : plan) (name : string) (kind : Dirent.kind) =
+  match kind with
+  | Dir -> false (* Always check directories (traversal) *)
+  | Unknown -> false (* Must stat to know what it is *)
+  | Reg | Symlink | Other ->
+      match planner.name_filter with
+      | Some f -> not (f name) (* Skip if name filter implies no match *)
+      | None -> false
 
 (* Create entry from path, returning Option for error handling *)
 let make_entry path : Eval.entry option =
@@ -229,98 +238,189 @@ let visit (cfg : config) (planner : plan) depth emit dir_path =
     match cfg.max_depth with
     | Some max_d when depth >= max_d -> ()
     | _ ->
-        readdir_seq dir_path cfg.preserve_timestamps
-        |> Seq.filter (fun name -> name <> "." && name <> "..")
-        |> Seq.filter (fun name -> should_visit cfg planner name)
-        |> Seq.iter (fun name ->
-             let full_path = Filename.concat dir_path name in
-             match make_entry full_path with
-             | None -> ()
-             | Some entry ->
-                 emit entry;
-                 match entry.kind with
-                 | Dir -> aux (depth + 1) full_path
-                 | Symlink when cfg.follow_symlinks ->
-                     (match Unix.stat full_path with
-                      | { st_kind = S_DIR; _ } -> aux (depth + 1) full_path
-                      | _ -> ()
-                      | exception _ -> ())
-                 | _ -> ()
+        let entries = readdir_typed dir_path cfg.preserve_timestamps in
+        entries
+        |> List.iter (fun (name, kind) ->
+             if name <> "." && name <> ".." && should_visit cfg planner name then
+               if can_skip_stat planner name kind then () (* OPTIMIZATION: Skip lstat *)
+               else
+                 let full_path = Filename.concat dir_path name in
+                 match make_entry full_path with
+                 | None -> ()
+                 | Some entry ->
+                     emit entry;
+                     match entry.kind with
+                     | Dir -> aux (depth + 1) full_path
+                     | Symlink when cfg.follow_symlinks ->
+                         (match Unix.stat full_path with
+                          | { st_kind = S_DIR; _ } -> aux (depth + 1) full_path
+                          | _ -> ()
+                          | exception _ -> ())
+                     | _ -> ()
            )
   in
   aux depth dir_path
 
+(* Dynamic Work Pool Strategy *)
+module Work_pool = struct
+  type t = {
+    queue : string Queue.t;
+    lock : Eio.Mutex.t;
+    cond : Eio.Condition.t;
+    mutable active_workers : int;
+    mutable total_workers : int;
+    mutable shutdown : bool;
+  }
+
+  let create () = {
+    queue = Queue.create ();
+    lock = Eio.Mutex.create ();
+    cond = Eio.Condition.create ();
+    active_workers = 0;
+    total_workers = 0;
+    shutdown = false;
+  }
+
+  let push t item =
+    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
+      Queue.push item t.queue;
+      Eio.Condition.broadcast t.cond
+    )
+
+  (* Try to pop an item. If empty, wait until item available or termination. *)
+  let rec pop t =
+    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
+      if not (Queue.is_empty t.queue) then
+        Some (Queue.pop t.queue)
+      else if t.shutdown then
+        None
+      else if t.active_workers = 0 then (
+        (* No active workers and queue empty -> Termination *)
+        t.shutdown <- true;
+        Eio.Condition.broadcast t.cond;
+        None
+      ) else (
+        (* Wait for work *)
+        Eio.Condition.await t.cond t.lock;
+        (* Retry after wake up *)
+        (* Note: The recursive call here is inside the lock, but Eio.Mutex allows it? 
+           NO. await releases lock. Recursive call needs to re-acquire.
+           Actually, simply returning a special value to retry is safer, or constructing loop outside.
+           Let's return `Retry` or `Done`. *)
+        (* Better: loop inside the lock? No, await releases lock. *)
+        (* Eio.Condition.await releases lock and re-acquires.
+           So we CAN loop here. *)
+        None (* Placeholder, will be retried by caller wrapper if needed, but let's do it properly *)
+      )
+    )
+    
+  (* Correct Pop implementation with loop *)
+  let pop_blocking t =
+    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
+      let rec loop () =
+        if not (Queue.is_empty t.queue) then
+          Some (Queue.pop t.queue)
+        else if t.shutdown then
+          None
+        else if t.active_workers = 0 then (
+          t.shutdown <- true;
+          Eio.Condition.broadcast t.cond;
+          None
+        ) else (
+          Eio.Condition.await t.cond t.lock;
+          loop ()
+        )
+      in
+      loop ()
+    )
+end
+
 let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_path =
-  (* Strategy: Static Partitioning at Root
-     Instead of spawning domains recursively (high overhead), we read the root directory,
-     distribute top-level directories into `concurrency` buckets, and spawn a domain for each bucket.
-     Inside each bucket, we run efficient DFS. *)
-     
   let run_in_switch f = Eio.Switch.run f in
   
   run_in_switch @@ fun sw ->
   
-  (* 1. Read all top-level entries *)
-  let top_entries = 
-    readdir_seq start_path cfg.preserve_timestamps
-    |> Seq.filter (fun name -> name <> "." && name <> "..")
-    |> Seq.filter (fun name -> should_visit cfg planner name)
-    |> List.of_seq
-  in
+  let pool = Work_pool.create () in
+  Work_pool.push pool start_path;
+  pool.total_workers <- concurrency;
   
-  (* 2. Partition into buckets *)
-  let buckets = Array.make concurrency [] in
-  List.iteri (fun i name ->
-    let bucket_idx = i mod concurrency in
-    buckets.(bucket_idx) <- name :: buckets.(bucket_idx)
-  ) top_entries;
+  let rec worker_loop () =
+    match Work_pool.pop_blocking pool with
+    | None -> () (* Done *)
+    | Some dir_path ->
+        (* Mark as active *)
+        Eio.Mutex.use_rw ~protect:true pool.lock (fun () -> pool.active_workers <- pool.active_workers + 1);
+        
+        (* Process directory *)
+        (try
+           let entries = readdir_typed dir_path cfg.preserve_timestamps in
+           entries |> List.iter (fun (name, kind) ->
+             if name <> "." && name <> ".." && should_visit cfg planner name then
+               if can_skip_stat planner name kind then ()
+               else
+                 let full_path = Filename.concat dir_path name in
+                 match make_entry full_path with
+                 | None -> ()
+                 | Some entry ->
+                     emit entry;
+                     match entry.kind with
+                     | Dir -> Work_pool.push pool full_path
+                     | Symlink when cfg.follow_symlinks ->
+                         (match Unix.stat full_path with
+                          | { st_kind = S_DIR; _ } -> Work_pool.push pool full_path
+                          | _ -> ()
+                          | exception _ -> ())
+                     | _ -> ()
+           )
+         with exn -> 
+           Printf.eprintf "Error processing %s: %s\n%!" dir_path (Printexc.to_string exn)
+        );
 
-  (* 3. Define worker function: Process a list of names from start_path *)
-  let process_bucket names =
-    (* We need a local function that doesn't capture 'sw' if we spawn new domains, 
-       but here we are INSIDE the spawned domain already.
-       We can just use 'visit' (DFS) which is efficient. *)
-    List.iter (fun name ->
-       let full_path = Filename.concat start_path name in
-       match make_entry full_path with
-       | None -> ()
-       | Some entry ->
-           emit entry;
-           match entry.kind with
-           | Dir -> visit cfg planner 1 emit full_path (* Depth 1 since we are at root children *)
-           | Symlink when cfg.follow_symlinks ->
-               (match Unix.stat full_path with
-                | { st_kind = S_DIR; _ } -> visit cfg planner 1 emit full_path
-                | _ -> ()
-                | exception _ -> ())
-           | _ -> ()
-    ) names
+        (* Mark as inactive *)
+        Eio.Mutex.use_rw ~protect:true pool.lock (fun () -> 
+           pool.active_workers <- pool.active_workers - 1;
+           if pool.active_workers = 0 && Queue.is_empty pool.queue then (
+             pool.shutdown <- true;
+             Eio.Condition.broadcast pool.cond
+           )
+        );
+        worker_loop ()
   in
 
-  (* 4. Spawn domains *)
-  let active_fibers = Atomic.make 0 in
+  (* Spawn domains *)
+  (* Using Atomic for domain counting not strictly needed since pool tracks it, but Eio needs forks *)
   
-  (* Helper to spawn or run *)
-  let run_bucket i =
-    let bucket = buckets.(i) in
-    if bucket <> [] then (
-      Atomic.incr active_fibers;
-      Fiber.fork ~sw (fun () ->
-        Fun.protect ~finally:(fun () -> Atomic.decr active_fibers) (fun () ->
-          match cfg.spawn with
-          | Some spawn_fn when i > 0 -> (* Keep bucket 0 on main domain, spawn others *)
-               spawn_fn (fun () -> process_bucket bucket)
-          | _ ->
-               (* No domain manager or bucket 0: run here *)
-               process_bucket bucket
-        )
-      )
-    )
+  (* We spawn (concurrency - 1) domains + 1 fiber on current domain *)
+  let spawn_workers () =
+    for i = 1 to concurrency - 1 do
+       Fiber.fork ~sw (fun () ->
+         match cfg.spawn with
+         | Some spawn_fn -> spawn_fn (fun () -> 
+             (* Need a Switch in new domain? Parallel strategy usually implies independent switches 
+                or just running pure code. Readdir is blocking syscall. *)
+             (* Eio functions inside spawn_fn might need switch? 
+                Work_pool uses Eio.Mutex. *)
+             (* CRITICAL: Eio.Mutex and Condition must be used within Eio. 
+                If spawn_fn uses `Eio.Domain_manager.run`, it creates a new domain. 
+                Eio primitives are thread-safe across domains IF specific backends support it.
+                Eio_posix usually supports sharing via domains. *)
+             
+             (* However, `Eio.Domain_manager.run` expects the function to just run. 
+                If we use Eio mutex inside, we need an Eio environment? 
+                Actually, `spawn_fn` provided by `main.ml` uses `Eio.Domain_manager.run env`. 
+                This runs the function in a new domain.
+                Does that domain have a Switch? `run` does NOT create a switch. 
+                So we should create one. *)
+             Eio.Switch.run @@ fun _sw -> worker_loop ()
+         )
+         | None -> worker_loop ()
+       )
+    done;
+    (* Run one worker on current domain *)
+    worker_loop ()
   in
   
-  for i = 0 to concurrency - 1 do
-    run_bucket i
-  done
+  spawn_workers ()
 
 let traverse (cfg : config) (root_path : string) (expr : Typed.expr) (emit : Eval.entry -> unit) =
   let p = Planner.plan expr in

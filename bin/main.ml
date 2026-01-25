@@ -52,27 +52,47 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
         let concurrency = match jobs with | None -> 1 | Some n -> n in
         let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
         let ignore_patterns = config.ignore @ exclude in
+        
         let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode; spawn = Some spawn_fn } in
         
         let batch_paths = ref [] in
         let all_found_paths = ref [] in
-
-        Traversal.traverse cfg root_dir typed_ast (fun entry ->
-          if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
-            all_found_paths := entry.path :: !all_found_paths;
-
-            match exec_command with
-            | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
-            | None -> ();
-            
-            match exec_batch_command with
-            | Some _ -> batch_paths := entry.path :: !batch_paths
-            | None -> ();
-            
-            if Option.is_none exec_command && Option.is_none exec_batch_command then
-                Printf.printf "%s\n%!" entry.path
+        
+        (* Thread-safe result collection: Use a Stream with termination signal *)
+        let results_stream = Eio.Stream.create 4096 in
+        
+        Eio.Fiber.both
+          (fun () ->
+             (* Consumer Fiber *)
+             let rec loop () =
+               match Eio.Stream.take results_stream with
+               | None -> () (* End of stream *)
+               | Some (entry : Eval.entry) ->
+                   all_found_paths := entry.path :: !all_found_paths;
+                   
+                   (match exec_command with
+                   | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
+                   | None -> ());
+                   
+                   (match exec_batch_command with
+                   | Some _ -> batch_paths := entry.path :: !batch_paths
+                   | None -> ());
+                   
+                   if Option.is_none exec_command && Option.is_none exec_batch_command then
+                     Printf.printf "%s\n%!" entry.path;
+                   loop ()
+             in
+             loop ()
           )
-        );
+          (fun () ->
+             (* Producer Fiber: Traversal *)
+             Traversal.traverse cfg root_dir typed_ast (fun entry ->
+               if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
+                 Eio.Stream.add results_stream (Some entry)
+               )
+             );
+             Eio.Stream.add results_stream None
+          );
         
         (match exec_batch_command with
         | Some cmd_tmpl ->

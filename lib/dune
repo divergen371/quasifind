@@ -18,11 +18,12 @@
   suspicious
   ghost
   rule_loader
-  rule_converter)
+  rule_converter
+  dirent)
  (libraries angstrom re eio eio_main yojson str)
  (foreign_stubs
   (language c)
-  (names stealth_stubs))
+  (names stealth_stubs dirent_stubs))
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))
 
