@@ -16,21 +16,16 @@ type config = {
 
 type plan = {
   start_path : string;
-  (* In future: ignore lists, etc *)
 }
 
 module Planner = struct
-  (* Minimal A: Extract distinct static path prefix if possible *)
   let extract_start_path (expr : Typed.expr) : string =
     let rec aux acc = function
       | And (e1, e2) ->
           let p1 = aux acc e1 in
           if String.length p1 > String.length acc then p1 else aux acc e2
-      (* Handle specific path equality or regex slightly carefully *)
-      | Path (StrEq s) -> s (* Exact path match is a great start path *)
-      | Path (StrRe re) -> "." (* Regex is hard to optimize statically without prefix analysis, for now fallback *)
-      (* Simple containment check for "starts with" could be done here if we had a dedicated Op,
-         but for now we look for exact matches or assume root *)
+      | Path (StrEq s) -> s
+      | Path (StrRe _) -> "."
       | _ -> acc
     in
     let p = aux "." expr in
@@ -40,52 +35,63 @@ module Planner = struct
     { start_path = extract_start_path expr }
 end
 
-(* ... *)
-
 let should_ignore cfg name =
-  (* Check hidden *)
   if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then true
   else
-    (* Check ignore list using Glob *)
     List.exists (fun pattern ->
       let re = Re.Glob.glob pattern |> Re.compile in
       Re.execp re name
     ) cfg.ignore
 
+(* Helper to read directory entries as a Seq *)
+let readdir_seq dir_path : string Seq.t =
+  match Sys.readdir dir_path with
+  | entries -> Array.to_seq entries
+  | exception Sys_error msg ->
+      Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path msg;
+      Seq.empty
+
+(* Create entry from path, returning Option for error handling *)
+let make_entry path : Eval.entry option =
+  match Unix.lstat path with
+  | stats ->
+      let kind = match stats.st_kind with
+        | Unix.S_REG -> File
+        | Unix.S_DIR -> Dir
+        | Unix.S_LNK -> Symlink
+        | _ -> File
+      in
+      let size = Int64.of_int stats.st_size in
+      let name = Filename.basename path in
+      Some { Eval.name; path; kind; size; mtime = stats.st_mtime }
+  | exception Unix.Unix_error (err, _, _) ->
+      Printf.eprintf "[Warning] Cannot stat %s: %s\n%!" path (Unix.error_message err);
+      None
+
 let rec visit (cfg : config) depth emit dir_path =
   match cfg.max_depth with
   | Some max_d when depth >= max_d -> ()
   | _ ->
-    match Sys.readdir dir_path with
-    | entries ->
-      Array.iter (fun name ->
-        if name <> "." && name <> ".." then
-          if should_ignore cfg name then ()
-          else
-            let full_path = Filename.concat dir_path name in
-            try
-               let stats = Unix.lstat full_path in
-               let kind = match stats.st_kind with
-                 | Unix.S_REG -> File
-                 | Unix.S_DIR -> Dir
-                 | Unix.S_LNK -> Symlink
-                 | _ -> File
-               in
-               
-               let size = Int64.of_int stats.st_size in
-               let entry = { Eval.name; path = full_path; kind; size; mtime = stats.st_mtime } in
+      readdir_seq dir_path
+      |> Seq.filter (fun name -> name <> "." && name <> "..")
+      |> Seq.filter (fun name -> not (should_ignore cfg name))
+      |> Seq.iter (fun name ->
+           let full_path = Filename.concat dir_path name in
+           match make_entry full_path with
+           | None -> ()
+           | Some entry ->
                emit entry;
-
-               if kind = Dir then
-                 visit cfg (depth + 1) emit full_path
-               else if kind = Symlink && cfg.follow_symlinks then
-                 match Unix.stat full_path with
-                 | { st_kind = S_DIR; _ } -> visit cfg (depth + 1) emit full_path
-                 | _ -> ()
-                 | exception _ -> ()
-            with _ -> ()
-      ) entries
-    | exception _ -> ()
+               match entry.kind with
+               | Dir -> visit cfg (depth + 1) emit full_path
+               | Symlink when cfg.follow_symlinks ->
+                   (match Unix.stat full_path with
+                    | { st_kind = S_DIR; _ } -> visit cfg (depth + 1) emit full_path
+                    | _ -> ()
+                    | exception Unix.Unix_error (err, _, _) ->
+                        Printf.eprintf "[Warning] Cannot follow symlink %s: %s\n%!" 
+                          full_path (Unix.error_message err))
+               | _ -> ()
+         )
 
 let traverse_parallel ~concurrency (cfg : config) emit start_path =
   Eio.Switch.run @@ fun sw ->
@@ -95,43 +101,35 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
     match cfg.max_depth with
     | Some max_d when depth >= max_d -> ()
     | _ ->
-      Eio.Semaphore.acquire sem;
-      Fun.protect ~finally:(fun () -> Eio.Semaphore.release sem) (fun () ->
-        match Sys.readdir dir_path with
-        | entries ->
-          Array.iter (fun name ->
-            if name <> "." && name <> ".." then
-              if should_ignore cfg name then ()
-              else
-                let full_path = Filename.concat dir_path name in
-                try
-                   let stats = Unix.lstat full_path in
-                   let kind = match stats.st_kind with
-                     | Unix.S_REG -> File
-                     | Unix.S_DIR -> Dir
-                     | Unix.S_LNK -> Symlink
-                     | _ -> File
-                   in
-                   let entry = { Eval.name; path = full_path; kind; size = Int64.of_int stats.st_size; mtime = stats.st_mtime } in
+        Eio.Semaphore.acquire sem;
+        Fun.protect ~finally:(fun () -> Eio.Semaphore.release sem) (fun () ->
+          readdir_seq dir_path
+          |> Seq.filter (fun name -> name <> "." && name <> "..")
+          |> Seq.filter (fun name -> not (should_ignore cfg name))
+          |> Seq.iter (fun name ->
+               let full_path = Filename.concat dir_path name in
+               match make_entry full_path with
+               | None -> ()
+               | Some entry ->
                    emit entry;
-
-                   if kind = Dir then
-                     Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
-                   else if kind = Symlink && cfg.follow_symlinks then
-                     match Unix.stat full_path with
-                     | { st_kind = S_DIR; _ } -> Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
-                     | _ -> ()
-                     | exception _ -> ()
-                with _ -> ()
-          ) entries
-        | exception _ -> ()
-      )
+                   match entry.kind with
+                   | Dir -> Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
+                   | Symlink when cfg.follow_symlinks ->
+                       (match Unix.stat full_path with
+                        | { st_kind = S_DIR; _ } -> 
+                            Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
+                        | _ -> ()
+                        | exception Unix.Unix_error (err, _, _) ->
+                            Printf.eprintf "[Warning] Cannot follow symlink %s: %s\n%!" 
+                              full_path (Unix.error_message err))
+                   | _ -> ()
+             )
+        )
   in
   visit_parallel 0 start_path
 
 let traverse (cfg : config) (root_path : string) (expr : Typed.expr) (emit : Eval.entry -> unit) =
   let p = Planner.plan expr in
-  (* traceln "Planned start path: %s" p.start_path; *)
   
   let effective_start_path =
     if p.start_path = "." then root_path

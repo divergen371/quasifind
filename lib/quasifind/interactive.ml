@@ -131,25 +131,30 @@ module TUI = struct
     Buffer.add_char b '\'';
     Buffer.contents b
 
+  (* Read lines from input channel as Seq *)
+  let read_lines_seq ic : string Seq.t =
+    let rec next () =
+      match input_line ic with
+      | line -> Seq.Cons (line, next)
+      | exception End_of_file -> Seq.Nil
+    in
+    next
+
   (* Execute preview command and get output lines *)
   let get_preview preview_cmd selected_item =
     match preview_cmd with
     | None -> []
     | Some cmd_template ->
-        (* Quote the selected item for safe shell execution *)
         let quoted_item = shell_quote selected_item in
         let cmd = Str.global_replace (Str.regexp_string "{}") quoted_item cmd_template in
-        try
-          let ic = Unix.open_process_in cmd in
-          let lines = ref [] in
-          (try
-            while true do
-              lines := input_line ic :: !lines
-            done
-          with End_of_file -> ());
-          ignore (Unix.close_process_in ic);
-          List.rev !lines
-        with _ -> ["(Preview error)"]
+        match Unix.open_process_in cmd with
+        | ic ->
+            let lines = read_lines_seq ic |> List.of_seq in
+            ignore (Unix.close_process_in ic);
+            lines
+        | exception Unix.Unix_error (err, _, _) ->
+            Printf.eprintf "[Warning] Preview command failed: %s\n%!" (Unix.error_message err);
+            ["(Preview error)"]
 
   let render state display_rows (cols, _) preview_cmd =
     let left_width = cols / 2 - 1 in
