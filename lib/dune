@@ -12,7 +12,8 @@
   fuzzy_matcher
   interactive
   config
-  profile)
+  profile
+  watcher)
  (libraries angstrom re eio eio_main yojson str)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))
