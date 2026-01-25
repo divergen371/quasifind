@@ -35,6 +35,7 @@ module Typed = struct
   (* Normalized values *)
   type size_bytes = int64
   type time_seconds = float (* age in seconds *)
+  type perm_int = int
 
   type expr =
     | True
@@ -48,6 +49,7 @@ module Typed = struct
     | Type of type_cmp
     | Size of size_cmp
     | MTime of time_cmp
+    | Perm of perm_cmp
   
   and string_cmp = 
     | StrEq of string
@@ -73,4 +75,12 @@ module Typed = struct
     | TimeLe of time_seconds
     | TimeGt of time_seconds
     | TimeGe of time_seconds
+
+  and perm_cmp =
+    | PermEq of perm_int
+    | PermNe of perm_int
+    | PermLt of perm_int
+    | PermLe of perm_int
+    | PermGt of perm_int
+    | PermGe of perm_int
 end

@@ -7,6 +7,7 @@ type entry = {
   kind : Ast.file_type;
   size : int64;
   mtime : float; (* absolute usage time *)
+  perm : int;
 }
 
 let check_string op s =
@@ -39,6 +40,15 @@ let check_time now op mtime =
   | TimeGt target -> age > target
   | TimeGe target -> age >= target
 
+let check_perm op perm =
+  match op with
+  | PermEq target -> perm = target
+  | PermNe target -> perm <> target
+  | PermLt target -> perm < target
+  | PermLe target -> perm <= target
+  | PermGt target -> perm > target
+  | PermGe target -> perm >= target
+
 let rec eval (now : float) (expr : Typed.expr) (ent : entry) : bool =
   match expr with
   | True -> true
@@ -51,3 +61,4 @@ let rec eval (now : float) (expr : Typed.expr) (ent : entry) : bool =
   | Type op -> check_type op ent.kind
   | Size op -> check_size op ent.size
   | MTime op -> check_time now op ent.mtime
+  | Perm op -> check_perm op ent.perm

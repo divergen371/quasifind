@@ -16,8 +16,16 @@ let ident =
   lex (lift2 (fun c cs -> String.make 1 c ^ cs) (satisfy is1) (take_while is2))
 
 let int64_p =
-  lex (take_while1 (function '0' .. '9' -> true | _ -> false)) >>= fun s ->
-  return (Int64.of_string s)
+  lex (
+    choice [
+      (string "0x" *> take_while1 (function '0'..'9' | 'a'..'f' | 'A'..'F' -> true | _ -> false) >>| fun s -> "0x" ^ s);
+      (string "0o" *> take_while1 (function '0'..'7' -> true | _ -> false) >>| fun s -> "0o" ^ s);
+      (string "0b" *> take_while1 (function '0'..'1' -> true | _ -> false) >>| fun s -> "0b" ^ s);
+      take_while1 (function '0' .. '9' -> true | _ -> false)
+    ]
+  ) >>= fun s ->
+  try return (Int64.of_string s)
+  with Failure _ -> fail "Invalid integer"
 
 let quoted_string =
   let escaped =

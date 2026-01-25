@@ -63,7 +63,7 @@ let make_entry path : Eval.entry option =
       in
       let size = Int64.of_int stats.st_size in
       let name = Filename.basename path in
-      Some { Eval.name; path; kind; size; mtime = stats.st_mtime }
+      Some { Eval.name; path; kind; size; mtime = stats.st_mtime; perm = stats.st_perm }
   | exception Unix.Unix_error (err, _, _) ->
       Printf.eprintf "[Warning] Cannot stat %s: %s\n%!" path (Unix.error_message err);
       None

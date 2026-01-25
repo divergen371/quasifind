@@ -72,6 +72,10 @@ let check_value_type f = function
   | VType t -> Ok t
   | v -> Error (TypeMismatch { field = f; expected = "file type"; got = show_value v })
 
+let check_value_perm f = function
+  | VInt n -> Ok (Int64.to_int n)
+  | v -> Error (TypeMismatch { field = f; expected = "permission (int)"; got = show_value v })
+
 let rec check (expr : Untyped.expr) : (Typed.expr, error) result =
   let open Result in
   match expr with
@@ -96,6 +100,7 @@ and check_cmp field op value =
   | "type" -> check_type op value
   | "size" -> check_size op value
   | "mtime" -> check_mtime op value
+  | "perm" -> check_perm op value
   | s -> Error (UnknownField s)
 
 and check_name op value =
@@ -147,3 +152,18 @@ and check_mtime op value =
   match op with
   | RegexMatch -> Error (InvalidOp { field = "mtime"; op; reason = "regex not supported" })
   | _ -> check_value_time "mtime" value |> Result.map mk_time
+
+and check_perm op value =
+  let mk_perm v =
+    match op with
+    | Eq -> Perm (PermEq v)
+    | Ne -> Perm (PermNe v)
+    | Lt -> Perm (PermLt v)
+    | Le -> Perm (PermLe v)
+    | Gt -> Perm (PermGt v)
+    | Ge -> Perm (PermGe v)
+    | RegexMatch -> failwith "unreachable"
+  in
+  match op with
+  | RegexMatch -> Error (InvalidOp { field = "perm"; op; reason = "regex not supported" })
+  | _ -> check_value_perm "perm" value |> Result.map mk_perm

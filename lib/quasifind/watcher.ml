@@ -11,6 +11,7 @@ type watch_config = {
 type file_state = {
   path : string;
   mtime : float;
+  perm : int;
 }
 
 (* Event types for logging/notifications *)
@@ -28,7 +29,7 @@ let scan_files config =
   let now = Unix.gettimeofday () in
   Traversal.traverse config.traversal_config config.root config.expr (fun entry ->
     if Eval.eval now config.expr entry then
-      files := StringMap.add entry.path { path = entry.path; mtime = entry.mtime } !files
+      files := StringMap.add entry.path { path = entry.path; mtime = entry.mtime; perm = entry.perm } !files
   );
   !files
 
@@ -115,14 +116,14 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
       StringMap.iter (fun path file ->
         match StringMap.find_opt path !state with
         | None ->
-            on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime };
+            on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
             log_event ?log_channel New path;
             send_webhook ?webhook_url New path;
             send_email ?email_addr New path;
             send_slack ?slack_url New path
         | Some old_file ->
             if file.mtime > old_file.mtime then begin
-              on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime };
+              on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
               log_event ?log_channel Modified path;
               send_webhook ?webhook_url Modified path;
               send_email ?email_addr Modified path;
@@ -133,7 +134,7 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
       (* Detect deleted files *)
       StringMap.iter (fun path _ ->
         if not (StringMap.mem path new_state) then begin
-          on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0 };
+          on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0; perm = 0 };
           log_event ?log_channel Deleted path;
           send_webhook ?webhook_url Deleted path;
           send_email ?email_addr Deleted path;

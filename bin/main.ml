@@ -3,9 +3,12 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode help_short =
   if help_short then `Help (`Auto, None)
-  else
+  else (
+  (* If --stealth is enabled, mask process name *)
+  if stealth_mode then Stealth.enable ();
+
   (* If --profile is specified, load profile and use its settings *)
   match profile_name with
   | Some name ->
@@ -18,7 +21,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode false
       )
   | None ->
       match expr_str_opt with
@@ -91,6 +94,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                   );
                   
                   `Ok ()
+  )
 
 
 (* --- History Command --- *)
@@ -210,9 +214,11 @@ let watch_log = Arg.(value & opt (some string) None & info ["log"] ~docv:"FILE" 
 let webhook_url = Arg.(value & opt (some string) None & info ["notify-url"] ~docv:"URL" ~doc:"Webhook URL for notifications (HTTP POST with JSON).")
 let email_addr = Arg.(value & opt (some string) None & info ["notify-email"] ~docv:"EMAIL" ~doc:"Email address for notifications (requires mail command).")
 let slack_url = Arg.(value & opt (some string) None & info ["slack-webhook"] ~docv:"URL" ~doc:"Slack incoming webhook URL.")
+let stealth_mode = Arg.(value & flag & info ["stealth"] ~doc:"Stealth mode: mask process name from system tools.")
+let suspicious_mode = Arg.(value & flag & info ["suspicious"] ~doc:"Suspicious mode: search for potentially dangerous files using built-in rules.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 

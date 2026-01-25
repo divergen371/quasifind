@@ -28,6 +28,7 @@ let test_eval_simple () =
     kind = Ast.File; (* Ast.File *)
     size = 100L;
     mtime = 0.0;
+    perm = 0;
   } in
   check bool "name match" true (Eval.eval 0.0 expr entry)
 
