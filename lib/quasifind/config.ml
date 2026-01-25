@@ -5,11 +5,17 @@ type fuzzy_finder = Auto | Fzf | Builtin [@@deriving show, eq]
 type t = {
   fuzzy_finder : fuzzy_finder;
   ignore : string list;
+  email : string option;
+  webhook_url : string option;
+  slack_url : string option;
 } [@@deriving show, eq]
 
 let default = {
   fuzzy_finder = Auto;
   ignore = ["_build"; ".git"; "node_modules"; ".DS_Store"];
+  email = None;
+  webhook_url = None;
+  slack_url = None;
 }
 
 let fuzzy_finder_of_string = function
@@ -28,7 +34,19 @@ let t_of_json json =
     try member "ignore" json |> to_list |> List.map to_string
     with _ -> default.ignore
   in
-  { fuzzy_finder; ignore }
+  let email = 
+    try to_option to_string (member "email" json)
+    with _ -> None
+  in
+  let webhook_url = 
+    try to_option to_string (member "webhook_url" json)
+    with _ -> None
+  in
+  let slack_url = 
+    try to_option to_string (member "slack_url" json)
+    with _ -> None
+  in
+  { fuzzy_finder; ignore; email; webhook_url; slack_url }
 
 let get_config_dir () =
   let home = Sys.getenv "HOME" in

@@ -17,7 +17,8 @@
   stealth
   suspicious
   ghost
-  rule_loader)
+  rule_loader
+  rule_converter)
  (libraries angstrom re eio eio_main yojson str)
  (foreign_stubs
   (language c)

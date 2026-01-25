@@ -8,26 +8,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
   else (
   (* Handle rule update request *)
   if update_rules then (
-    Printf.printf "Updating rules from remote source...\n%!";
-    
-    (* In a real network implementation, we would define url and cmd here *)
-    
-    (* Simulating successful update *)
-    let simulated_json = {|
-{
-  "version": "1.1",
-  "rules": [
-    { "name": "Remote: Crypto Miner", "expr": "name =~ /.*miner.*/" },
-    { "name": "Remote: Reverse Shell", "expr": "content =~ /bash -i >&/" }
-  ]
-}
-|} in
-    let file = Rule_loader.rules_file () in
-    let oc = open_out file in
-    output_string oc simulated_json;
-    close_out oc;
-    
-    Printf.printf "Rules updated successfully (simulated fetch).\nSaved to %s\n%!" file;
+    Rule_converter.update_from_source ();
     `Ok ()
   ) else (
   (* Regular Search Logic *)
@@ -114,9 +95,16 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                   History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
                   
                   (* Watch mode: start monitoring if enabled *)
+                  (* Watch mode: start monitoring if enabled *)
                   if watch_mode then (
                     let interval = match watch_interval with Some i -> float_of_int i | None -> 2.0 in
-                    Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ?webhook_url ?email_addr ?slack_url ()
+                    
+                    (* Resolve notification settings from args or config *)
+                    let final_webhook = match webhook_url with Some _ -> webhook_url | None -> config.webhook_url in
+                    let final_email = match email_addr with Some _ -> email_addr | None -> config.email in
+                    let final_slack = match slack_url with Some _ -> slack_url | None -> config.slack_url in
+
+                    Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ?webhook_url:final_webhook ?email_addr:final_email ?slack_url:final_slack ()
                   );
                   
                   if suspicious_mode then (
