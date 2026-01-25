@@ -10,6 +10,15 @@ type rule_set = {
   rules : rule_def list;
 }
 
+let default_rule_set = {
+  version = "1.0";
+  rules = [
+    { name = "Sample: PHP WebShell"; expr = "name =~ /\\.php$/ && content =~ /(eval\\(base64_|shell_exec\\()/" };
+    { name = "Sample: Reverse Shell"; expr = "content =~ /bash -i >& \\/dev\\/(tcp|udp)/" };
+    { name = "Sample: High Entropy"; expr = "entropy > 7.5 && size > 10KB" };
+  ]
+}
+
 (* Using minimal JSON handling to avoid complex dependencies if possible, 
    but since Yojson is available, we use it for robustness *)
 
@@ -74,10 +83,12 @@ let save_rules rs =
 
 let load_rules () =
   let file = rules_file () in
-  if Sys.file_exists file then
+  if not (Sys.file_exists file) then (
+    save_rules default_rule_set;
+    Printf.printf "Created default rules at %s\n%!" file;
+    Some default_rule_set
+  ) else
     try
       let json = Yojson.Basic.from_file file in
       Some (of_json json)
     with _ -> None
-  else
-    None
