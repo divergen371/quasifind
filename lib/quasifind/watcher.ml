@@ -44,7 +44,23 @@ let log_event ?log_channel event_type path =
   | Some oc -> output_string oc line; flush oc
   | None -> ()
 
-let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file () =
+(* Send webhook notification via curl (fire and forget) *)
+let send_webhook ?webhook_url event_type path =
+  match webhook_url with
+  | None -> ()
+  | Some url ->
+      let timestamp = 
+        let t = Unix.localtime (Unix.gettimeofday ()) in
+        Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d"
+          (t.tm_year + 1900) (t.tm_mon + 1) t.tm_mday t.tm_hour t.tm_min t.tm_sec
+      in
+      let json = Printf.sprintf {|{"event":"%s","path":"%s","timestamp":"%s"}|}
+        (string_of_event event_type) path timestamp in
+      let cmd = Printf.sprintf "curl -s -X POST -H 'Content-Type: application/json' -d '%s' '%s' > /dev/null 2>&1 &" 
+        json url in
+      ignore (Unix.system cmd)
+
+let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url () =
   Printf.eprintf "[Watch] Monitoring %s (interval: %.1fs, Ctrl+C to stop)\n%!" root interval;
   
   (* Open log file if specified *)
@@ -54,6 +70,10 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
         Some (open_out_gen [Open_wronly; Open_append; Open_creat] 0o644 path)
     | None -> None
   in
+  
+  (match webhook_url with
+   | Some url -> Printf.eprintf "[Watch] Webhook notifications to %s\n%!" url
+   | None -> ());
   
   let config = { interval; root; traversal_config = cfg; expr } in
   let state = ref (scan_files config) in
@@ -70,11 +90,13 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
         match StringMap.find_opt path !state with
         | None ->
             on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime };
-            log_event ?log_channel New path
+            log_event ?log_channel New path;
+            send_webhook ?webhook_url New path
         | Some old_file ->
             if file.mtime > old_file.mtime then begin
               on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime };
-              log_event ?log_channel Modified path
+              log_event ?log_channel Modified path;
+              send_webhook ?webhook_url Modified path
             end
       ) new_state;
       
@@ -82,7 +104,8 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
       StringMap.iter (fun path _ ->
         if not (StringMap.mem path new_state) then begin
           on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0 };
-          log_event ?log_channel Deleted path
+          log_event ?log_channel Deleted path;
+          send_webhook ?webhook_url Deleted path
         end
       ) !state;
       
@@ -92,8 +115,8 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
     (match log_channel with Some oc -> close_out oc | None -> ());
     raise e
 
-let watch_with_output ~interval ~root ~cfg ~expr ?log_file () =
+let watch_with_output ~interval ~root ~cfg ~expr ?log_file ?webhook_url () =
   let on_new entry = Printf.printf "[NEW] %s\n%!" entry.Eval.path in
   let on_modified entry = Printf.printf "[MODIFIED] %s\n%!" entry.Eval.path in
   let on_deleted entry = Printf.printf "[DELETED] %s\n%!" entry.Eval.path in
-  watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ()
+  watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ()
