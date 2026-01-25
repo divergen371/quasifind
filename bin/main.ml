@@ -63,7 +63,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                   let all_found_paths = ref [] in
 
                   Traversal.traverse cfg root_dir typed_ast (fun entry ->
-                    if Eval.eval now typed_ast entry then (
+                    if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
                       all_found_paths := entry.path :: !all_found_paths;
 
                       match exec_command with
@@ -91,6 +91,14 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                   if watch_mode then (
                     let interval = match watch_interval with Some i -> float_of_int i | None -> 2.0 in
                     Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ?webhook_url ?email_addr ?slack_url ()
+                  );
+                  
+                  if suspicious_mode then (
+                    let ghosts = Ghost.scan () in
+                    if ghosts <> [] then (
+                      Printf.printf "\n[!] Ghost Files Detected (deleted but open):\n";
+                      List.iter (fun g -> Printf.printf "    %s\n" g) ghosts
+                    )
                   );
                   
                   `Ok ()

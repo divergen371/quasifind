@@ -58,6 +58,11 @@ let check_value_regex f = function
   | VString s -> compile_regex s (* Allow string as regex if operator is =~ *)
   | v -> Error (TypeMismatch { field = f; expected = "regex"; got = show_value v })
 
+let check_value_float f = function
+  | VFloat f -> Ok f
+  | VInt n -> Ok (Float.of_int (Int64.to_int n))
+  | v -> Error (TypeMismatch { field = f; expected = "float"; got = show_value v })
+
 let check_value_size f = function
   | VSize (n, u) -> Ok (normalize_size n u)
   | VInt n -> Ok n (* Interpret raw int as bytes *)
@@ -97,6 +102,8 @@ and check_cmp field op value =
   match field with
   | "name" -> check_name op value
   | "path" -> check_path op value
+  | "content" -> check_content op value
+  | "entropy" -> check_entropy op value
   | "type" -> check_type op value
   | "size" -> check_size op value
   | "mtime" -> check_mtime op value
@@ -116,6 +123,13 @@ and check_path op value =
   | Ne -> check_value_string "path" value |> Result.map (fun s -> Path (StrNe s))
   | RegexMatch -> check_value_regex "path" value |> Result.map (fun re -> Path (StrRe re))
   | _ -> Error (InvalidOp { field = "path"; op; reason = "only ==, !=, =~ supported" })
+
+and check_content op value =
+  match op with
+  | Eq -> check_value_string "content" value |> Result.map (fun s -> Content (StrEq s))
+  | Ne -> check_value_string "content" value |> Result.map (fun s -> Content (StrNe s))
+  | RegexMatch -> check_value_regex "content" value |> Result.map (fun re -> Content (StrRe re))
+  | _ -> Error (InvalidOp { field = "content"; op; reason = "only ==, !=, =~ supported" })
 
 and check_type op value =
   match op with
@@ -152,6 +166,21 @@ and check_mtime op value =
   match op with
   | RegexMatch -> Error (InvalidOp { field = "mtime"; op; reason = "regex not supported" })
   | _ -> check_value_time "mtime" value |> Result.map mk_time
+
+and check_entropy op value =
+  let mk_float v =
+    match op with
+    | Eq -> Entropy (FloatEq v)
+    | Ne -> Entropy (FloatNe v)
+    | Lt -> Entropy (FloatLt v)
+    | Le -> Entropy (FloatLe v)
+    | Gt -> Entropy (FloatGt v)
+    | Ge -> Entropy (FloatGe v)
+    | RegexMatch -> failwith "unreachable"
+  in
+  match op with
+  | RegexMatch -> Error (InvalidOp { field = "entropy"; op; reason = "regex not supported" })
+  | _ -> check_value_float "entropy" value |> Result.map mk_float
 
 and check_perm op value =
   let mk_perm v =

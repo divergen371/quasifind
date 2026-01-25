@@ -15,7 +15,8 @@
   profile
   watcher
   stealth
-  suspicious)
+  suspicious
+  ghost)
  (libraries angstrom re eio eio_main yojson str)
  (foreign_stubs
   (language c)

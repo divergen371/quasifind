@@ -27,6 +27,16 @@ let int64_p =
   try return (Int64.of_string s)
   with Failure _ -> fail "Invalid integer"
 
+let float_p =
+  lex (
+    take_while1 (function '0'..'9' -> true | _ -> false) >>= fun whole ->
+    char '.' *>
+    take_while (function '0'..'9' -> true | _ -> false) >>= fun frac ->
+    return (whole ^ "." ^ frac)
+  ) >>= fun s ->
+  try return (Float.of_string s)
+  with Failure _ -> fail "Invalid float"
+
 let quoted_string =
   let escaped =
     char '\\' *> any_char >>| function
@@ -89,7 +99,8 @@ let value_p =
         (dur_unit_p >>| fun u -> VDur (n, u));
         (return (VInt n))
       ]
-    )
+    );
+    (float_p >>| fun f -> VFloat f)
   ]
 
 let cmp_op_p =

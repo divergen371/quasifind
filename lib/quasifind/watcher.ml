@@ -28,7 +28,7 @@ let scan_files config =
   let files = ref StringMap.empty in
   let now = Unix.gettimeofday () in
   Traversal.traverse config.traversal_config config.root config.expr (fun entry ->
-    if Eval.eval now config.expr entry then
+    if Eval.eval ~preserve_timestamps:config.traversal_config.preserve_timestamps now config.expr entry then
       files := StringMap.add entry.path { path = entry.path; mtime = entry.mtime; perm = entry.perm } !files
   );
   !files

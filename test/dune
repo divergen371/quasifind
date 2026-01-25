@@ -5,3 +5,11 @@
 (test
  (name test_traversal)
  (libraries quasifind alcotest eio eio_main))
+
+(test
+ (name test_content)
+ (libraries quasifind alcotest re re.pcre))
+
+(test
+ (name test_entropy)
+ (libraries quasifind alcotest))

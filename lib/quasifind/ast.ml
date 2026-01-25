@@ -16,6 +16,7 @@ module Untyped = struct
     | VString of string
     | VRegex of string
     | VInt of int64
+    | VFloat of float
     | VSize of int64 * size_unit
     | VDur of int64 * dur_unit
     | VType of file_type
@@ -46,6 +47,8 @@ module Typed = struct
     (* Specific typed comparisons *)
     | Name of string_cmp
     | Path of string_cmp
+    | Content of string_cmp
+    | Entropy of float_cmp (* Shannon entropy *)
     | Type of type_cmp
     | Size of size_cmp
     | MTime of time_cmp
@@ -75,6 +78,14 @@ module Typed = struct
     | TimeLe of time_seconds
     | TimeGt of time_seconds
     | TimeGe of time_seconds
+
+  and float_cmp =
+    | FloatEq of float
+    | FloatNe of float
+    | FloatLt of float
+    | FloatLe of float
+    | FloatGt of float
+    | FloatGe of float
 
   and perm_cmp =
     | PermEq of perm_int
