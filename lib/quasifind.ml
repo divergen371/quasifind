@@ -8,3 +8,4 @@ module Config = Config
 module Typed = Typed
 module Typecheck = Typecheck
 module Eval = Eval
+module Profile = Profile

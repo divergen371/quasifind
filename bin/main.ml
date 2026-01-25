@@ -3,58 +3,89 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name help_short =
   if help_short then `Help (`Auto, None)
-  else match expr_str_opt with
-  | None -> `Help (`Auto, None)
-  | Some expr_str ->
-    let concurrency = match jobs with | None -> 1 | Some n -> n in
-    let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
-    let config = Config.load () in
-    let ignore_patterns = config.ignore @ exclude in
-    let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns } in
+  else
+  (* If --profile is specified, load profile and use its settings *)
+  match profile_name with
+  | Some name ->
+      (match Profile.load name with
+       | Error msg -> `Error (false, msg)
+       | Ok profile ->
+           let actual_root = match profile.root_dir with Some r -> r | None -> root_dir in
+           let actual_expr = profile.expr in
+           let actual_depth = match max_depth with Some _ -> max_depth | None -> profile.max_depth in
+           let actual_follow = follow_symlinks || profile.follow_symlinks in
+           let actual_hidden = include_hidden || profile.include_hidden in
+           let actual_exclude = profile.exclude @ exclude in
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None false
+      )
+  | None ->
+      match expr_str_opt with
+      | None -> `Help (`Auto, None)
+      | Some expr_str ->
+          (* Save profile if requested *)
+          (match save_profile_name with
+           | Some name ->
+               let profile : Profile.t = {
+                 root_dir = if root_dir = "." then None else Some root_dir;
+                 expr = expr_str;
+                 max_depth;
+                 follow_symlinks;
+                 include_hidden;
+                 exclude;
+               } in
+               (match Profile.save ~name profile with
+                | Ok () -> Printf.printf "Profile '%s' saved.\n%!" name
+                | Error msg -> Printf.eprintf "Warning: %s\n%!" msg)
+           | None -> ());
+          
+          let concurrency = match jobs with | None -> 1 | Some n -> n in
+          let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
+          let config = Config.load () in
+          let ignore_patterns = config.ignore @ exclude in
+          let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns } in
 
-    match Parser.parse expr_str with
-    | Error msg -> `Error (false, "Parse Error: " ^ msg)
-    | Ok untyped_ast ->
-        match Typecheck.check untyped_ast with
-        | Error err -> `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
-        | Ok typed_ast ->
-            Eio_main.run @@ fun _env ->
-            let now = Unix.gettimeofday () in
-            let mgr = Eio.Stdenv.process_mgr _env in
-            
-            let batch_paths = ref [] in
-            let all_found_paths = ref [] in (* For history *)
+          match Parser.parse expr_str with
+          | Error msg -> `Error (false, "Parse Error: " ^ msg)
+          | Ok untyped_ast ->
+              match Typecheck.check untyped_ast with
+              | Error err -> `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
+              | Ok typed_ast ->
+                  Eio_main.run @@ fun _env ->
+                  let now = Unix.gettimeofday () in
+                  let mgr = Eio.Stdenv.process_mgr _env in
+                  
+                  let batch_paths = ref [] in
+                  let all_found_paths = ref [] in
 
-            Traversal.traverse cfg root_dir typed_ast (fun entry ->
-              if Eval.eval now typed_ast entry then (
-                (* Collect for history *)
-                all_found_paths := entry.path :: !all_found_paths;
+                  Traversal.traverse cfg root_dir typed_ast (fun entry ->
+                    if Eval.eval now typed_ast entry then (
+                      all_found_paths := entry.path :: !all_found_paths;
 
-                match exec_command with
-                | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
-                | None -> ();
-                
-                match exec_batch_command with
-                | Some _ -> batch_paths := entry.path :: !batch_paths
-                | None -> ();
-                
-                if Option.is_none exec_command && Option.is_none exec_batch_command then
-                   Printf.printf "%s\n%!" entry.path
-              )
-            );
-            
-            (match exec_batch_command with
-            | Some cmd_tmpl ->
-                if !batch_paths <> [] then
-                  Exec.run_batch ~mgr ~sw:() cmd_tmpl (List.rev !batch_paths)
-            | None -> ());
-            
-            (* Save History *)
-            History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
-            
-            `Ok ()
+                      match exec_command with
+                      | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
+                      | None -> ();
+                      
+                      match exec_batch_command with
+                      | Some _ -> batch_paths := entry.path :: !batch_paths
+                      | None -> ();
+                      
+                      if Option.is_none exec_command && Option.is_none exec_batch_command then
+                         Printf.printf "%s\n%!" entry.path
+                    )
+                  );
+                  
+                  (match exec_batch_command with
+                  | Some cmd_tmpl ->
+                      if !batch_paths <> [] then
+                        Exec.run_batch ~mgr ~sw:() cmd_tmpl (List.rev !batch_paths)
+                  | None -> ());
+                  
+                  History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
+                  
+                  `Ok ()
+
 
 (* --- History Command --- *)
 
@@ -165,9 +196,11 @@ let jobs = Arg.(value & opt (some int) None & info ["jobs"; "j"] ~docv:"JOBS" ~d
 let exec_command = Arg.(value & opt (some string) None & info ["exec"; "x"] ~docv:"CMD" ~doc:"Execute command per file.")
 let exec_batch_command = Arg.(value & opt (some string) None & info ["exec-batch"; "X"] ~docv:"CMD" ~doc:"Execute command batch.")
 let exclude = Arg.(value & opt_all string [] & info ["exclude"; "E"] ~docv:"PATTERN" ~doc:"Exclude files matching pattern (glob). Can be specified multiple times.")
+let profile_name = Arg.(value & opt (some string) None & info ["profile"; "p"] ~docv:"NAME" ~doc:"Load a saved profile by name.")
+let save_profile_name = Arg.(value & opt (some string) None & info ["save-profile"] ~docv:"NAME" ~doc:"Save current search options as a profile.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 
