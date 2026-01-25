@@ -33,3 +33,4 @@
 
 - [x] Run against local directory (`quasifind . "true" -d 1` verified depth limit)
 - [x] Verify invalid syntax error reporting
+- [x] Verify help option (`-h` and no-args checks)
