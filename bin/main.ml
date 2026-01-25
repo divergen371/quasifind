@@ -47,7 +47,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
           let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
           let config = Config.load () in
           let ignore_patterns = config.ignore @ exclude in
-          let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns } in
+          let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode } in
 
           match Parser.parse expr_str with
           | Error msg -> `Error (false, "Parse Error: " ^ msg)

@@ -12,6 +12,7 @@ type config = {
   follow_symlinks : bool;
   include_hidden : bool;
   ignore : string list;
+  preserve_timestamps : bool;
 }
 
 type plan = {
@@ -43,13 +44,34 @@ let should_ignore cfg name =
       Re.execp re name
     ) cfg.ignore
 
+(* Helper to restore timestamps if needed *)
+let with_timestamps_preserved path preserve f =
+  if preserve then
+    match Unix.lstat path with
+    | stats ->
+        let atime = stats.st_atime in
+        let mtime = stats.st_mtime in
+        let res = f () in
+        (* Restore atime, mtime *)
+        (try Unix.utimes path atime mtime
+         with Unix.Unix_error (e, _, _) -> 
+           Printf.eprintf "[Warning] Could not restore timestamps for %s: %s\n%!" path (Unix.error_message e));
+        res
+    | exception Unix.Unix_error (e, _, _) ->
+        Printf.eprintf "[Warning] Could not stat %s for preserving timestamps: %s\n%!" path (Unix.error_message e);
+        f ()
+  else
+    f ()
+
 (* Helper to read directory entries as a Seq *)
-let readdir_seq dir_path : string Seq.t =
-  match Sys.readdir dir_path with
-  | entries -> Array.to_seq entries
-  | exception Sys_error msg ->
-      Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path msg;
-      Seq.empty
+let readdir_seq dir_path preserve : string Seq.t =
+  with_timestamps_preserved dir_path preserve (fun () ->
+    match Sys.readdir dir_path with
+    | entries -> Array.to_seq entries
+    | exception Sys_error msg ->
+        Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path msg;
+        Seq.empty
+  )
 
 (* Create entry from path, returning Option for error handling *)
 let make_entry path : Eval.entry option =
@@ -72,7 +94,7 @@ let rec visit (cfg : config) depth emit dir_path =
   match cfg.max_depth with
   | Some max_d when depth >= max_d -> ()
   | _ ->
-      readdir_seq dir_path
+      readdir_seq dir_path cfg.preserve_timestamps
       |> Seq.filter (fun name -> name <> "." && name <> "..")
       |> Seq.filter (fun name -> not (should_ignore cfg name))
       |> Seq.iter (fun name ->
@@ -103,7 +125,7 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
     | _ ->
         Eio.Semaphore.acquire sem;
         Fun.protect ~finally:(fun () -> Eio.Semaphore.release sem) (fun () ->
-          readdir_seq dir_path
+          readdir_seq dir_path cfg.preserve_timestamps
           |> Seq.filter (fun name -> name <> "." && name <> "..")
           |> Seq.filter (fun name -> not (should_ignore cfg name))
           |> Seq.iter (fun name ->
