@@ -13,9 +13,8 @@ type rule_set = {
 let default_rule_set = {
   version = "1.0";
   rules = [
-    { name = "Sample: PHP WebShell"; expr = "name =~ /\\.php$/ && content =~ /(eval\\(base64_|shell_exec\\()/" };
+    { name = "Sample: PHP WebShell"; expr = "name =~ /\\.php$/ && content =~ /eval\\\\(base64_|shell_exec\\\\(/" };
     { name = "Sample: Reverse Shell"; expr = "content =~ /bash -i >& \\/dev\\/(tcp|udp)/" };
-    { name = "Sample: High Entropy"; expr = "entropy > 7.5 && size > 10KB" };
   ]
 }
 
@@ -79,7 +78,14 @@ let save_rules rs =
   let file = rules_file () in
   let oc = open_out file in
   Yojson.Basic.to_channel oc json;
+  Yojson.Basic.to_channel oc json;
   close_out oc
+
+let reset_to_default () =
+  let file = rules_file () in
+  if Sys.file_exists file then Sys.remove file;
+  save_rules default_rule_set;
+  Printf.printf "Reset rules to default at %s\n%!" file
 
 let load_rules () =
   let file = rules_file () in

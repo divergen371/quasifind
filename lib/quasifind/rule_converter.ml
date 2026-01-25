@@ -24,7 +24,8 @@ let list_to_regex_alt items =
   items
   |> List.map String.trim
   |> List.filter (fun s -> s <> "" && not (String.starts_with ~prefix:"#" s)) (* Filter empty and comments *)
-  |> List.map Re.Pcre.quote (* Escape special chars *)
+  |> List.map Re.Pcre.quote (* Escape regex special chars *)
+  |> List.map (fun s -> Str.global_replace (Str.regexp "/") "\\/" s) (* Escape delimiters *)
   |> String.concat "|"
 
 (* Obsolete internal source definitions - moved to Config *)

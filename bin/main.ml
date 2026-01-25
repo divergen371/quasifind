@@ -3,11 +3,17 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules help_short =
   if help_short then `Help (`Auto, None)
   else (
-  (* Handle rule update request *)
-  if update_rules then (
+  (* Handle reset requests *)
+  if reset_config then (
+    Config.reset_to_default ();
+    `Ok ()
+  ) else if reset_rules then (
+    Rule_loader.reset_to_default ();
+    `Ok ()
+  ) else if update_rules then (
     Rule_converter.update_from_source ();
     `Ok ()
   ) else (
@@ -28,11 +34,85 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false
       )
   | None ->
+      (* Prepare configuration and runner *)
+      let config = Config.load () in
+      let concurrency = match jobs with | None -> 1 | Some n -> n in
+      let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
+      let ignore_patterns = config.ignore @ exclude in
+      let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode } in
+
+      (* Common execution logic *)
+      let run_logic typed_ast =
+        Eio_main.run @@ fun _env ->
+        let now = Unix.gettimeofday () in
+        let mgr = Eio.Stdenv.process_mgr _env in
+        
+        let batch_paths = ref [] in
+        let all_found_paths = ref [] in
+
+        Traversal.traverse cfg root_dir typed_ast (fun entry ->
+          if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
+            all_found_paths := entry.path :: !all_found_paths;
+
+            match exec_command with
+            | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
+            | None -> ();
+            
+            match exec_batch_command with
+            | Some _ -> batch_paths := entry.path :: !batch_paths
+            | None -> ();
+            
+            if Option.is_none exec_command && Option.is_none exec_batch_command then
+                Printf.printf "%s\n%!" entry.path
+          )
+        );
+        
+        (match exec_batch_command with
+        | Some cmd_tmpl ->
+            if !batch_paths <> [] then
+              Exec.run_batch ~mgr ~sw:() cmd_tmpl (List.rev !batch_paths)
+        | None -> ());
+        
+        History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
+        
+        if watch_mode then (
+          let interval = match watch_interval with Some i -> float_of_int i | None -> 2.0 in
+          let final_webhook = match webhook_url with Some _ -> webhook_url | None -> config.webhook_url in
+          let final_email = match email_addr with Some _ -> email_addr | None -> config.email in
+          let final_slack = match slack_url with Some _ -> slack_url | None -> config.slack_url in
+          Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ?webhook_url:final_webhook ?email_addr:final_email ?slack_url:final_slack ()
+        );
+        
+        if suspicious_mode || check_ghost then (
+          let ghosts = Ghost.scan root_dir in
+          if ghosts <> [] then (
+            Printf.printf "\n[!] Ghost Files Detected (deleted but open):\n";
+            List.iter (fun g -> Printf.printf "    %s\n" g) ghosts
+          )
+        );
+        
+        `Ok ()
+      in
+
       match expr_str_opt with
-      | None -> if not update_rules then `Help (`Auto, None) else `Ok ()
+      | None -> 
+          if check_ghost && not suspicious_mode then
+             (* Check ghost only mode - no file search needed typically, or scan all? *)
+             (* Ideally we don't start traversal if only check_ghost, but structure assumes traversal. *)
+             (* We can create a dummy AST "false" to skip traversal or just validly run empty search. *)
+             (* Better: run logic with "false" (match nothing) so we only get ghosts. *)
+             run_logic Ast.Typed.False
+          else if not suspicious_mode then `Help (`Auto, None) 
+          else
+             (* Suspicious mode without explicit expr -> use suspicious rules *)
+             let untyped_ast = Suspicious.rules () in
+             (match Typecheck.check untyped_ast with
+              | Error err -> `Error (false, "Type Error (Suspicious Rules): " ^ Typecheck.string_of_error err)
+              | Ok typed_ast -> run_logic typed_ast)
+
       | Some expr_str ->
           (* Save profile if requested *)
           (match save_profile_name with
@@ -49,75 +129,19 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                 | Ok () -> Printf.printf "Profile '%s' saved.\n%!" name
                 | Error msg -> Printf.eprintf "Warning: %s\n%!" msg)
            | None -> ());
-          
-          let concurrency = match jobs with | None -> 1 | Some n -> n in
-          let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
-          let config = Config.load () in
-          let ignore_patterns = config.ignore @ exclude in
-          let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode } in
 
           match Parser.parse expr_str with
           | Error msg -> `Error (false, "Parse Error: " ^ msg)
-          | Ok untyped_ast ->
-              match Typecheck.check untyped_ast with
+          | Ok user_ast ->
+              let final_ast = 
+                if suspicious_mode then Ast.Untyped.And (user_ast, Suspicious.rules ())
+                else user_ast
+              in
+              match Typecheck.check final_ast with
               | Error err -> `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
-              | Ok typed_ast ->
-                  Eio_main.run @@ fun _env ->
-                  let now = Unix.gettimeofday () in
-                  let mgr = Eio.Stdenv.process_mgr _env in
-                  
-                  let batch_paths = ref [] in
-                  let all_found_paths = ref [] in
-
-                  Traversal.traverse cfg root_dir typed_ast (fun entry ->
-                    if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
-                      all_found_paths := entry.path :: !all_found_paths;
-
-                      match exec_command with
-                      | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
-                      | None -> ();
-                      
-                      match exec_batch_command with
-                      | Some _ -> batch_paths := entry.path :: !batch_paths
-                      | None -> ();
-                      
-                      if Option.is_none exec_command && Option.is_none exec_batch_command then
-                         Printf.printf "%s\n%!" entry.path
-                    )
-                  );
-                  
-                  (match exec_batch_command with
-                  | Some cmd_tmpl ->
-                      if !batch_paths <> [] then
-                        Exec.run_batch ~mgr ~sw:() cmd_tmpl (List.rev !batch_paths)
-                  | None -> ());
-                  
-                  History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
-                  
-                  (* Watch mode: start monitoring if enabled *)
-                  (* Watch mode: start monitoring if enabled *)
-                  if watch_mode then (
-                    let interval = match watch_interval with Some i -> float_of_int i | None -> 2.0 in
-                    
-                    (* Resolve notification settings from args or config *)
-                    let final_webhook = match webhook_url with Some _ -> webhook_url | None -> config.webhook_url in
-                    let final_email = match email_addr with Some _ -> email_addr | None -> config.email in
-                    let final_slack = match slack_url with Some _ -> slack_url | None -> config.slack_url in
-
-                    Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ?webhook_url:final_webhook ?email_addr:final_email ?slack_url:final_slack ()
-                  );
-                  
-                  if suspicious_mode then (
-                    let ghosts = Ghost.scan () in
-                    if ghosts <> [] then (
-                      Printf.printf "\n[!] Ghost Files Detected (deleted but open):\n";
-                      List.iter (fun g -> Printf.printf "    %s\n" g) ghosts
-                    )
-                  );
-                  
-                  `Ok ()
+              | Ok typed_ast -> run_logic typed_ast
   )
-  ) (* End of else branch from help check *)
+  )
 
 
 (* --- History Command --- *)
@@ -240,9 +264,12 @@ let slack_url = Arg.(value & opt (some string) None & info ["slack-webhook"] ~do
 let stealth_mode = Arg.(value & flag & info ["stealth"] ~doc:"Stealth mode: mask process name from system tools.")
 let suspicious_mode = Arg.(value & flag & info ["suspicious"] ~doc:"Suspicious mode: search for potentially dangerous files using built-in rules.")
 let update_rules = Arg.(value & flag & info ["update-rules"] ~doc:"Download and update heuristic rules from trusted source.")
+let check_ghost = Arg.(value & flag & info ["check-ghost"] ~doc:"Detect deleted files that are still open.")
+let reset_config = Arg.(value & flag & info ["reset-config"] ~doc:"Reset configuration file to default.")
+let reset_rules = Arg.(value & flag & info ["reset-rules"] ~doc:"Reset heuristic rules to default.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 

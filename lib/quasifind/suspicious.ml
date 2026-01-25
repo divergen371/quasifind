@@ -44,7 +44,13 @@ let rules () =
   | Some rs ->
       List.fold_left (fun acc (r : Rule_loader.rule_def) ->
         match Parser.parse r.expr with
-        | Ok expr -> Or (acc, expr)
+        | Ok expr ->
+            (* Validate the individual rule before adding it to the global AST *)
+            (match Typecheck.check expr with
+             | Ok _ -> Or (acc, expr)
+             | Error err ->
+                 Printf.eprintf "Warning: Rule '%s' failed validation (skip): %s\n" r.name (Typecheck.string_of_error err);
+                 acc)
         | Error msg -> 
             Printf.eprintf "Warning: Failed to parse rule '%s': %s\n" r.name msg;
             acc

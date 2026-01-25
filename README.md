@@ -144,6 +144,7 @@ quasifind . 'true' -d 2
 3. **Ghostファイル検出 (`--check-ghost`)**
    削除されたものの、プロセスによってまだ開かれているファイル（Filelessマルウェアの痕跡など）を検出します。
    ※ `--suspicious` モードでは自動的に実行されます。
+   ※ `--suspicious` 単体で実行した場合、デフォルトのルールセット（または `rules.json`）が自動的に適用されます。追加の条件を指定したい場合は `quasifind . --suspicious 'size > 1GB'` のように記述してください。
 
 #### ステルスモード (`--stealth`)
 
@@ -192,8 +193,10 @@ quasifind --update-rules
 - `--interval=SECONDS`: ウォッチモードのスキャン間隔（秒）。デフォルトは 2 秒。
 - `--stealth`: ステルスモード。プロセス名を偽装し、ファイルアクセス痕跡（atime）を消去します。
 - `--suspicious`: 怪しいファイルを自動検出するプリセットモードです。
-- `--check-ghost`: Ghostファイル（削除済みだが開かれているファイル）を検出します。
+- `--check-ghost`: Ghostファイル（削除済みだが開かれているファイル）を検出します（単体で使用可能）。
 - `--update-rules`: 信頼できる外部ソースから最新の検出ルールをダウンロード・更新します。
+- `--reset-rules`: ヒューリスティックルール (`rules.json`) をデフォルトの状態にリセットします。
+- `--reset-config`: 設定ファイル (`config.json`) をデフォルトの状態にリセットします。
 - `--log=FILE`: ウォッチモード等のイベントログをファイルに出力します。
 - `--webhook=URL`: イベント発生時に指定URLへPOSTリクエストを送信します。
 - `--email=ADDR`: イベント発生時にメールを送信します（要sendmail）。

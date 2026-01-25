@@ -1,11 +1,10 @@
 (* Ghost File Detection using lsof *)
 (* Looks for unlinked files still open by processes *)
 
-let scan () =
-  let cmd = "lsof +L1 -F n 2>/dev/null" in 
-  (* -F n outputs machine readable format: p<PID> then n<NAME> *)
-  (* But +L1 with -F might be tricky. Let's use standard output and grep or parse *)
-  (* Simple format: lsof +L1 returns lines. We want filenames. *)
+let scan root =
+  (* Use human readable format to simplify parsing of the filename at the end *)
+  (* 2>/dev/null to hide permission errors etc *)
+  let cmd = "lsof +L1 2>/dev/null" in 
   
   try
     let ic = Unix.open_process_in cmd in
@@ -19,16 +18,21 @@ let scan () =
       ignore (Unix.close_process_in ic);
       List.rev !lines
       |> List.filter (fun line -> 
-           (* Skip header if present, usually headers start with COMMAND *)
-           not (String.starts_with ~prefix:"COMMAND" line)
+           (* Skip header and empty lines *)
+           line <> "" && not (String.starts_with ~prefix:"COMMAND" line)
          )
       |> List.map (fun line ->
-           (* Extract last column *)
+           (* Extract last column (filename) *)
            match String.split_on_char ' ' line |> List.filter (fun s -> s <> "") |> List.rev with
            | name :: _ -> name
            | [] -> ""
          )
-      |> List.filter (fun name -> name <> "")
+      |> List.filter (fun name -> 
+           name <> "" && (
+             let abs_root = if Filename.is_relative root then Filename.concat (Sys.getcwd ()) root else root in
+             String.starts_with ~prefix:abs_root name
+           )
+         )
   with _ -> 
     Printf.eprintf "[Warning] 'lsof' command failed or not found. Ghost scan skipped.\n%!";
     []

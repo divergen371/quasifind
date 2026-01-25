@@ -117,6 +117,11 @@ let save_default path =
   with e ->
     Printf.eprintf "Warning: Failed to ensure default config at %s: %s\n" path (Printexc.to_string e)
 
+let reset_to_default () =
+  let path = get_config_path () in
+  if Sys.file_exists path then Sys.remove path;
+  save_default path
+
 let load () =
   let path = get_config_path () in
   if not (Sys.file_exists path) then (
