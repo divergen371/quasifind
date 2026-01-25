@@ -1,0 +1,4 @@
+(executable
+ (public_name quasifind)
+ (name main)
+ (libraries quasifind))

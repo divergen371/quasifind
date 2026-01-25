@@ -1,0 +1,47 @@
+# OCaml
+*.cmo
+*.cmi
+*.cma
+*.cmx
+*.cmxa
+*.cmxs
+*.o
+*.a
+*.so
+*.annot
+*.cmt
+*.cmti
+*.cmt*
+*.exe
+*.obj
+*.lib
+*.dll
+*.bc
+*.native
+*.byte
+*.top
+*.coverage
+*.pp.ml
+*.pp.mli
+*.sexp
+
+# Build directories
+_build/
+*.install
+/.opam/
+
+# Dune
+.merlin
+
+# Editor files
+*~
+*.swp
+*.swo
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Specstory files
+*.specstory
