@@ -116,47 +116,98 @@ module TUI = struct
     with _ -> (80, 24)
 
   let truncate s len =
-    let len = max 10 len in (* Minimum functional width *)
+    let len = max 10 len in
     if String.length s <= len then s
     else String.sub s 0 (len - 3) ^ "..."
 
-  let render state display_rows (cols, _) =
+  (* Execute preview command and get output lines *)
+  let get_preview preview_cmd selected_item =
+    match preview_cmd with
+    | None -> []
+    | Some cmd_template ->
+        let cmd = Str.global_replace (Str.regexp_string "{}") selected_item cmd_template in
+        try
+          let ic = Unix.open_process_in cmd in
+          let lines = ref [] in
+          (try
+            while true do
+              lines := input_line ic :: !lines
+            done
+          with End_of_file -> ());
+          ignore (Unix.close_process_in ic);
+          List.rev !lines
+        with _ -> ["(Preview error)"]
+
+  let render state display_rows (cols, _) preview_cmd =
+    let left_width = cols / 2 - 1 in
+    let right_width = cols - left_width - 3 in (* 3 for separator *)
+    
+    (* Get preview content for selected item *)
+    let selected_item = 
+      if state.selected_idx < List.length state.filtered then
+        List.nth state.filtered state.selected_idx
+      else ""
+    in
+    let preview_lines = 
+      if preview_cmd = None then [] 
+      else get_preview preview_cmd selected_item 
+    in
+    
     (* Status line *)
     let status_line = Printf.sprintf "> %s" state.query in
     output_string stderr (clear_line ^ "\r" ^ truncate status_line (cols - 1) ^ "\n");
     
-    let rec print_candidates idx count =
-      if count >= display_rows then ()
-      else
+    let rec print_row idx =
+      if idx >= display_rows then ()
+      else begin
         let line_idx = idx + state.scroll_offset in
-        if line_idx >= List.length state.filtered then
-           output_string stderr (clear_line ^ "\r~\n")
-        else
-          let cand = List.nth state.filtered line_idx in
-          let prefix = if line_idx = state.selected_idx then "> " else "  " in
-          (* Dynamic truncation *)
-          let available_width = max 10 (cols - 4) in
-          let display_cand = truncate cand available_width in 
-          let line = 
+        
+        (* Left pane: candidates *)
+        let left_content =
+          if line_idx >= List.length state.filtered then "~"
+          else
+            let cand = List.nth state.filtered line_idx in
+            let prefix = if line_idx = state.selected_idx then "> " else "  " in
+            let display_cand = truncate cand (left_width - 4) in
             if line_idx = state.selected_idx then
-               esc ^ "[1;32m" ^ prefix ^ display_cand ^ esc ^ "[0m"
+              esc ^ "[1;32m" ^ prefix ^ display_cand ^ esc ^ "[0m"
             else prefix ^ display_cand
+        in
+        
+        (* Right pane: preview *)
+        let right_content =
+          if preview_cmd = None then ""
+          else if idx < List.length preview_lines then
+            truncate (List.nth preview_lines idx) right_width
+          else ""
+        in
+        
+        (* Render row *)
+        let separator = if preview_cmd = None then "" else " │ " in
+        let left_padded = 
+          let visible_len = 
+            (* Remove ANSI codes for length calc *)
+            let stripped = Str.global_replace (Str.regexp "\027\\[[0-9;]*m") "" left_content in
+            String.length stripped
           in
-          output_string stderr (clear_line ^ "\r" ^ line ^ "\n");
-          print_candidates (idx + 1) (count + 1)
+          left_content ^ String.make (max 0 (left_width - visible_len)) ' '
+        in
+        output_string stderr (clear_line ^ "\r" ^ left_padded ^ separator ^ right_content ^ "\n");
+        print_row (idx + 1)
+      end
     in
-    print_candidates 0 0;
+    print_row 0;
     
     Printf.eprintf "%s" (move_up (display_rows + 1));
     flush stderr
 
-  let loop candidates =
+  let loop ?preview_cmd candidates =
     let orig_termios = enable_raw () in
     output_string stderr hide_cursor;
     let term_dims = get_term_size () in
     
     let rec aux state =
-      render state 10 term_dims;
+      render state 10 term_dims preview_cmd;
       
       match read_key () with
       | None -> None
@@ -244,7 +295,7 @@ let select ?(query="") ?(finder=Config.Auto) ?preview_cmd candidates =
       run_fzf ?preview_cmd candidates
     else (
       if finder = Config.Fzf then Printf.eprintf "Warning: fzf not found, falling back to builtin TUI.\n";
-      TUI.loop candidates
+      TUI.loop ?preview_cmd candidates
     )
   else
-    TUI.loop candidates
+    TUI.loop ?preview_cmd candidates
