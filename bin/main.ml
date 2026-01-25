@@ -96,28 +96,12 @@ let run_history exec =
           (match find_idx 0 candidates with
            | Some idx ->
                let entry = List.nth history_rev idx in
-               let prog_in_history = List.hd entry.command in
-               let args = Array.of_list entry.command in
-               
-               (* Try to be smart about the executable path.
-                  If the history command looks like it was "quasifind" or the current executable,
-                  use the current running binary to ensure it exists. *)
-               let prog_to_run =
-                 if Filename.basename prog_in_history = "main.exe" || Filename.basename prog_in_history = "quasifind" then
-                   Sys.executable_name
-                 else
-                   prog_in_history
-               in
-               
-               (* args.(0) should conventionally be the program name.
-                  If we change prog_to_run, we might want to update args.(0) too, but execvp uses prog argument for file. *)
-               
-               (try Unix.execvp prog_to_run args 
-                with Unix.Unix_error (err, fn, p) ->
-                  Printf.eprintf "Execution failed: %s (function: %s, path: %s)\n" (Unix.error_message err) fn p;
-                  `Error (false, "Execution failed")
-               )
-           | None -> `Ok ()
+               let cmd_str = String.concat " " entry.command in
+               Printf.printf "%s\n" cmd_str;
+               `Ok ()
+           | None -> 
+               Printf.eprintf "Error: Could not find selected entry in history list.\n%!";
+               `Ok ()
           )
       | None -> `Ok ()
     else (
@@ -145,7 +129,7 @@ let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follo
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 
 (* History args *)
-let history_exec = Arg.(value & flag & info ["exec"; "e"] ~doc:"Select and execute a command from history.")
+let history_exec = Arg.(value & flag & info ["exec"; "e"] ~doc:"Select and output a command from history to stdout.")
 let history_t = Term.(ret (const run_history $ history_exec))
 let history_info = Cmd.info "quasifind history" ~doc:"Show or execute command history"
 
