@@ -1,6 +1,25 @@
 (* Ghost File Detection using lsof *)
 (* Looks for unlinked files still open by processes *)
 
+let parse_lsof_output lines root =
+  lines
+  |> List.filter (fun line -> 
+       (* Skip header and empty lines *)
+       line <> "" && not (String.starts_with ~prefix:"COMMAND" line)
+     )
+  |> List.map (fun line ->
+       (* Extract last column (filename) *)
+       match String.split_on_char ' ' line |> List.filter (fun s -> s <> "") |> List.rev with
+       | name :: _ -> name
+       | [] -> ""
+     )
+  |> List.filter (fun name -> 
+       name <> "" && (
+         let abs_root = if Filename.is_relative root then Filename.concat (Sys.getcwd ()) root else root in
+         String.starts_with ~prefix:abs_root name
+       )
+     )
+
 let scan root =
   (* Use human readable format to simplify parsing of the filename at the end *)
   (* 2>/dev/null to hide permission errors etc *)
@@ -16,23 +35,7 @@ let scan root =
       []
     with End_of_file ->
       ignore (Unix.close_process_in ic);
-      List.rev !lines
-      |> List.filter (fun line -> 
-           (* Skip header and empty lines *)
-           line <> "" && not (String.starts_with ~prefix:"COMMAND" line)
-         )
-      |> List.map (fun line ->
-           (* Extract last column (filename) *)
-           match String.split_on_char ' ' line |> List.filter (fun s -> s <> "") |> List.rev with
-           | name :: _ -> name
-           | [] -> ""
-         )
-      |> List.filter (fun name -> 
-           name <> "" && (
-             let abs_root = if Filename.is_relative root then Filename.concat (Sys.getcwd ()) root else root in
-             String.starts_with ~prefix:abs_root name
-           )
-         )
+      parse_lsof_output (List.rev !lines) root
   with _ -> 
     Printf.eprintf "[Warning] 'lsof' command failed or not found. Ghost scan skipped.\n%!";
     []

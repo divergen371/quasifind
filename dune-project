@@ -30,7 +30,9 @@
   ppx_deriving
   alcotest
   cmdliner
-  yojson)
+  yojson
+  qcheck
+  qcheck-alcotest)
  (tags
   ("add topics" "to describe" your project)))
 

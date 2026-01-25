@@ -21,6 +21,8 @@ depends: [
   "alcotest"
   "cmdliner"
   "yojson"
+  "qcheck"
+  "qcheck-alcotest"
   "odoc" {with-doc}
 ]
 build: [

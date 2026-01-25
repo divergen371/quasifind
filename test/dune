@@ -13,3 +13,39 @@
 (test
  (name test_entropy)
  (libraries quasifind alcotest))
+
+(test
+ (name test_rules)
+ (libraries quasifind alcotest re re.pcre))
+
+(test
+ (name test_ghost)
+ (libraries quasifind alcotest))
+
+(test
+ (name test_props)
+ (libraries quasifind qcheck qcheck-alcotest))
+
+(test
+ (name test_suspicious)
+ (libraries quasifind alcotest re re.pcre))
+
+(test
+ (name test_exec)
+ (libraries quasifind alcotest re re.pcre))
+
+(test
+ (name test_profile)
+ (libraries quasifind alcotest yojson))
+
+(test
+ (name test_history)
+ (libraries quasifind alcotest yojson))
+
+(test
+ (name test_config)
+ (libraries quasifind alcotest yojson))
+
+(test
+ (name test_rule_converter)
+ (libraries quasifind alcotest str re re.pcre))
