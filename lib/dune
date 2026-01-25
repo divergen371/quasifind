@@ -16,7 +16,8 @@
   watcher
   stealth
   suspicious
-  ghost)
+  ghost
+  rule_loader)
  (libraries angstrom re eio eio_main yojson str)
  (foreign_stubs
   (language c)

@@ -1,7 +1,7 @@
 (* Suspicious file detection rules *)
 open Ast.Untyped
 
-let rules () = 
+let default_rules () = 
   let hidden_exec = 
     Cmp ("name", RegexMatch, VRegex "^\\..*\\.(sh|py|exe)$") 
   in
@@ -24,16 +24,29 @@ let rules () =
     Cmp ("name", RegexMatch, VRegex "^[A-Za-z0-9+/=]{30,}\\.[a-z]+$")
   in
   
-  Or (
-    hidden_exec,
     Or (
-      dangerous_perm,
+      hidden_exec,
       Or (
-        suid_files,
+        dangerous_perm,
         Or (
-          huge_tmp,
-          Or (suspicious_ext, base64_name)
+          suid_files,
+          Or (
+            huge_tmp,
+            Or (suspicious_ext, base64_name)
+          )
         )
       )
     )
-  )
+
+let rules () =
+  let default_rule = default_rules () in
+  match Rule_loader.load_rules () with
+  | Some rs ->
+      List.fold_left (fun acc (r : Rule_loader.rule_def) ->
+        match Parser.parse r.expr with
+        | Ok expr -> Or (acc, expr)
+        | Error msg -> 
+            Printf.eprintf "Warning: Failed to parse rule '%s': %s\n" r.name msg;
+            acc
+      ) default_rule rs.rules
+  | None -> default_rule
