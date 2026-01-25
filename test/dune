@@ -49,3 +49,7 @@
 (test
  (name test_rule_converter)
  (libraries quasifind alcotest str re re.pcre))
+
+(test
+ (name test_interactive)
+ (libraries quasifind alcotest str))
