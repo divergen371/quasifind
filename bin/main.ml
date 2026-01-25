@@ -29,13 +29,14 @@ let run root_dir expr_str max_depth follow_symlinks jobs =
           Printf.eprintf "Type Error: %s\n%!" (Typecheck.string_of_error err);
           exit 1
       | Ok typed_ast ->
-          (* 3. Traverse & Eval *)
           Eio_main.run @@ fun _env ->
           (* Use absolute path for root if possible, or leave as is. Traversal handles it. *)
+          let now = Unix.gettimeofday () in
           Traversal.traverse cfg root_dir typed_ast (fun entry ->
-            (* 4. Output *)
-            (* For now just print path *)
-            Printf.printf "%s\n%!" entry.path
+            (* 4. Eval *)
+            if Eval.eval now typed_ast entry then
+              (* 5. Output *)
+              Printf.printf "%s\n%!" entry.path
           )
 
 (* CLI Definitions *)

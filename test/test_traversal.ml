@@ -69,10 +69,48 @@ let test_parallel () =
     teardown_test_dir root;
     raise e
 
+let test_filtering () =
+  let root = setup_test_dir () in
+  try
+    let cfg = {
+      Traversal.strategy = Traversal.DFS;
+      max_depth = None;
+      follow_symlinks = false;
+    } in
+    (* Custom collect function with filtering enabled, mimicking main.ml *)
+    let paths = ref [] in
+    let emit (entry : Eval.entry) =
+      (* Filter: size > 0 (both a.txt and b.txt have content) AND name == "a.txt" *)
+      let expr = Ast.Typed.(And (
+        Size (SizeGt 0L),
+        Name (StrEq "a.txt")
+      )) in
+      if Eval.eval (Unix.gettimeofday ()) expr entry then
+        paths := entry.path :: !paths
+    in
+    (* We pass True to traverse, but filter in separate emit *)
+    (* Wait, traverse signature takes expr but doesn't apply it for output. *)
+    (* So we can test Eval logic integration here. *)
+    
+    Eio_main.run (fun _env ->
+        Traversal.traverse cfg root Ast.Typed.True emit
+    );
+    
+    let result = !paths in
+    let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) result in
+    check bool "find a.txt" true (contains "a.txt");
+    check bool "exclude b.txt" false (contains "b.txt");
+    
+    teardown_test_dir root
+  with e ->
+    teardown_test_dir root;
+    raise e
+
 let suite = [
   "Traversal", [
     test_case "DFS" `Quick test_dfs;
     test_case "Parallel" `Quick test_parallel;
+    test_case "Filtering" `Quick test_filtering;
   ]
 ]
 
