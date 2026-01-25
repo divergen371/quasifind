@@ -95,7 +95,8 @@ let run_history exec =
     
     if exec then
       let config = Config.load () in
-      match Interactive.select ~finder:config.fuzzy_finder candidates with
+      let preview_cmd = Sys.executable_name ^ " history preview {}" in
+      match Interactive.select ~finder:config.fuzzy_finder ~preview_cmd candidates with
       | Some selection ->
           let rec find_idx idx = function
             | [] -> None
@@ -117,7 +118,39 @@ let run_history exec =
       `Ok ()
     )
 
-(* --- CLI Definitions --- *)
+(* History preview: display results for a given formatted history line *)
+let run_history_preview line =
+  let history = History.load () in
+  let history_rev = List.rev history in
+  let candidates = List.map format_entry history in
+  let candidates = List.rev candidates in
+  
+  let rec find_idx idx = function
+    | [] -> None
+    | c :: cs -> if c = line then Some idx else find_idx (idx + 1) cs
+  in
+  match find_idx 0 candidates with
+  | Some idx ->
+      let entry = List.nth history_rev idx in
+      (match entry.full_results_path with
+       | Some path when Sys.file_exists path ->
+           let ic = open_in path in
+           (try
+             while true do
+               Printf.printf "%s\n" (input_line ic)
+             done
+           with End_of_file -> close_in ic);
+           `Ok ()
+       | Some _ -> 
+           Printf.printf "(Results file not found)\n";
+           `Ok ()
+       | None ->
+           Printf.printf "(No results saved for this entry)\n";
+           `Ok ()
+      )
+  | None ->
+      Printf.eprintf "Entry not found in history.\n";
+      `Ok ()
 
 (* --- CLI Definitions --- *)
 
@@ -141,15 +174,22 @@ let history_exec = Arg.(value & flag & info ["exec"; "e"] ~doc:"Select and outpu
 let history_t = Term.(ret (const run_history $ history_exec))
 let history_info = Cmd.info "quasifind history" ~doc:"Show or execute command history"
 
+(* History preview args *)
+let history_preview_line = Arg.(required & pos 0 (some string) None & info [] ~docv:"LINE" ~doc:"The formatted history line to preview.")
+let history_preview_t = Term.(ret (const run_history_preview $ history_preview_line))
+let history_preview_info = Cmd.info "quasifind history preview" ~doc:"Preview results for a history entry"
+
 let () = 
   let argv = Sys.argv in
   let n = Array.length argv in
-  if n > 1 && argv.(1) = "history" then
-    (* Shift argv for history command: PROGRAM history args... -> PROGRAM args... *)
+  if n > 2 && argv.(1) = "history" && argv.(2) = "preview" then
+    (* Shift argv for history preview: PROGRAM history preview args... *)
+    let new_argv = Array.init (n - 2) (fun i -> if i = 0 then argv.(0) else argv.(i+2)) in
+    exit (Cmd.eval ~argv:new_argv (Cmd.v history_preview_info history_preview_t))
+  else if n > 1 && argv.(1) = "history" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v history_info history_t))
   else if n > 1 && argv.(1) = "search" then
-    (* Shift argv for search command: PROGRAM search args... -> PROGRAM args... *)
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v search_info search_t))
   else

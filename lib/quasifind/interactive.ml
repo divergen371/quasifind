@@ -9,9 +9,13 @@ let check_fzf_availability () =
   with _ -> false
 
 (* Run fzf with candidates piped to stdin *)
-let run_fzf candidates =
-  let cmd = "fzf" in
-  let (ic, oc) = Unix.open_process cmd in
+let run_fzf ?preview_cmd candidates =
+  let preview_opt = match preview_cmd with
+    | Some cmd -> " --preview '" ^ cmd ^ "'"
+    | None -> ""
+  in
+  let fzf_cmd = "fzf" ^ preview_opt in
+  let (ic, oc) = Unix.open_process fzf_cmd in
   try
     List.iter (fun s -> output_string oc (s ^ "\n")) candidates;
     close_out oc; (* Send EOF to fzf to start *)
@@ -20,7 +24,7 @@ let run_fzf candidates =
     match Unix.close_process (ic, oc) with
     | Unix.WEXITED 0 -> res
     | _ -> None
-  with e ->
+  with _ ->
     ignore (Unix.close_process (ic, oc));
     None
 
@@ -223,7 +227,7 @@ module TUI = struct
       raise e
 end
 
-let select ?(query="") ?(finder=Config.Auto) candidates =
+let select ?(query="") ?(finder=Config.Auto) ?preview_cmd candidates =
   if not (is_atty ()) then (
     Printf.eprintf "Interactive selection requires a terminal.\n";
     None
@@ -237,11 +241,8 @@ let select ?(query="") ?(finder=Config.Auto) candidates =
   
   if use_fzf then
     if check_fzf_availability () then
-      run_fzf candidates
+      run_fzf ?preview_cmd candidates
     else (
-      (* If forced Fzf but not found, warn and fallback? or error? 
-         User requested Fzf explicitly. Error or warning + fallback.
-         Let's fallback with warning. *)
       if finder = Config.Fzf then Printf.eprintf "Warning: fzf not found, falling back to builtin TUI.\n";
       TUI.loop candidates
     )
