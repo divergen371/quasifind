@@ -103,10 +103,10 @@ module TUI = struct
   let get_term_size () =
     try
       let ic = Unix.open_process_in "tput cols" in
-      let cols = try int_of_string (input_line ic) with _ -> 80 in
+      let cols = try int_of_string (String.trim (input_line ic)) with _ -> 80 in
       ignore (Unix.close_process_in ic);
       let ic = Unix.open_process_in "tput lines" in
-      let rows = try int_of_string (input_line ic) with _ -> 24 in
+      let rows = try int_of_string (String.trim (input_line ic)) with _ -> 24 in
       ignore (Unix.close_process_in ic);
       (cols, rows)
     with _ -> (80, 24)
@@ -116,8 +116,7 @@ module TUI = struct
     if String.length s <= len then s
     else String.sub s 0 (len - 3) ^ "..."
 
-  let render state display_rows =
-    let (cols, _) = get_term_size () in
+  let render state display_rows (cols, _) =
     (* Status line *)
     let status_line = Printf.sprintf "> %s" state.query in
     output_string stdout (clear_line ^ "\r" ^ truncate status_line (cols - 1) ^ "\n");
@@ -132,7 +131,6 @@ module TUI = struct
           let cand = List.nth state.filtered line_idx in
           let prefix = if line_idx = state.selected_idx then "> " else "  " in
           (* Dynamic truncation *)
-          (* 4 chars for prefix/margin *)
           let available_width = max 10 (cols - 4) in
           let display_cand = truncate cand available_width in 
           let line = 
@@ -151,9 +149,10 @@ module TUI = struct
   let loop candidates =
     let orig_termios = enable_raw () in
     output_string stdout hide_cursor;
+    let term_dims = get_term_size () in
     
     let rec aux state =
-      render state 10;
+      render state 10 term_dims;
       
       match read_key () with
       | None -> None

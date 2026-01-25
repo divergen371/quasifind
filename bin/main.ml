@@ -89,10 +89,6 @@ let run_history exec =
       let config = Config.load () in
       match Interactive.select ~finder:config.fuzzy_finder candidates with
       | Some selection ->
-          (* Find corresponding entry. Selection string matches format. *)
-          (* Simple lookup by index or string match? *)
-          (* Distinct strings? Formatting includes timestamp, so likely unique unless spamming. *)
-          (* Let's find index in candidates list *)
           let rec find_idx idx = function
             | [] -> None
             | c :: cs -> if c = selection then Some idx else find_idx (idx + 1) cs
@@ -100,20 +96,28 @@ let run_history exec =
           (match find_idx 0 candidates with
            | Some idx ->
                let entry = List.nth history_rev idx in
-               (* Execute command *)
-               (* We need to re-run quasifind with args. *)
-               (* entry.command is ["quasifind"; "arg"; ...] *)
-               (* We can use Unix.execv or just Sys.command. *)
-               (* Sys.command expects string. execv expects array. *)
-               (* entry.command is string list. *)
-               (* Warning: re-executing might cause recursion if it saves history again.
-                  Ideally we shouldn't save history for history execution? 
-                  Or executing it adds a NEW history entry (correct behavior).
-               *)
-               let prog = List.hd entry.command in (* might be "quasifind" or path *)
+               let prog_in_history = List.hd entry.command in
                let args = Array.of_list entry.command in
-               Unix.execvp prog args (* execvp searches PATH *)
-           | None -> `Ok () (* execution cancelled or not found *)
+               
+               (* Try to be smart about the executable path.
+                  If the history command looks like it was "quasifind" or the current executable,
+                  use the current running binary to ensure it exists. *)
+               let prog_to_run =
+                 if Filename.basename prog_in_history = "main.exe" || Filename.basename prog_in_history = "quasifind" then
+                   Sys.executable_name
+                 else
+                   prog_in_history
+               in
+               
+               (* args.(0) should conventionally be the program name.
+                  If we change prog_to_run, we might want to update args.(0) too, but execvp uses prog argument for file. *)
+               
+               (try Unix.execvp prog_to_run args 
+                with Unix.Unix_error (err, fn, p) ->
+                  Printf.eprintf "Execution failed: %s (function: %s, path: %s)\n" (Unix.error_message err) fn p;
+                  `Error (false, "Execution failed")
+               )
+           | None -> `Ok ()
           )
       | None -> `Ok ()
     else (
