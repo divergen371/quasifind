@@ -60,10 +60,30 @@ let get_config_path () =
     (try Unix.mkdir dir 0o755 with _ -> ());
   Filename.concat dir "config.json"
 
+let t_to_json t =
+  let open Util in
+  `Assoc [
+    ("fuzzy_finder", `String (match t.fuzzy_finder with Auto -> "auto" | Fzf -> "fzf" | Builtin -> "builtin"));
+    ("ignore", `List (List.map (fun s -> `String s) t.ignore));
+    ("email", match t.email with Some s -> `String s | None -> `Null);
+    ("webhook_url", match t.webhook_url with Some s -> `String s | None -> `Null);
+    ("slack_url", match t.slack_url with Some s -> `String s | None -> `Null);
+  ]
+
+let save_default path =
+  let json = t_to_json default in
+  try
+    Yojson.Safe.to_file path json;
+    Printf.printf "Created default config at %s\n%!" path
+  with e ->
+    Printf.eprintf "Warning: Failed to ensure default config at %s: %s\n" path (Printexc.to_string e)
+
 let load () =
   let path = get_config_path () in
-  if not (Sys.file_exists path) then default
-  else
+  if not (Sys.file_exists path) then (
+    save_default path;
+    default
+  ) else
     try
       let json = Yojson.Safe.from_file path in
       t_of_json json
