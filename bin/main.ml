@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command help_short =
+let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude help_short =
   if help_short then `Help (`Auto, None)
   else match expr_str_opt with
   | None -> `Help (`Auto, None)
@@ -11,7 +11,8 @@ let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs e
     let concurrency = match jobs with | None -> 1 | Some n -> n in
     let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
     let config = Config.load () in
-    let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = config.ignore } in
+    let ignore_patterns = config.ignore @ exclude in
+    let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns } in
 
     match Parser.parse expr_str with
     | Error msg -> `Error (false, "Parse Error: " ^ msg)
@@ -163,9 +164,10 @@ let include_hidden = Arg.(value & flag & info ["hidden"; "H"] ~doc:"Include hidd
 let jobs = Arg.(value & opt (some int) None & info ["jobs"; "j"] ~docv:"JOBS" ~doc:"Number of parallel jobs.")
 let exec_command = Arg.(value & opt (some string) None & info ["exec"; "x"] ~docv:"CMD" ~doc:"Execute command per file.")
 let exec_batch_command = Arg.(value & opt (some string) None & info ["exec-batch"; "X"] ~docv:"CMD" ~doc:"Execute command batch.")
+let exclude = Arg.(value & opt_all string [] & info ["exclude"; "E"] ~docv:"PATTERN" ~doc:"Exclude files matching pattern (glob). Can be specified multiple times.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 
