@@ -49,11 +49,47 @@ module TUI = struct
   let disable_raw termios =
     Unix.tcsetattr Unix.stdin Unix.TCSANOW termios
 
-  (* Input reading *)
-  let read_char () =
-    let buf = Bytes.create 1 in
-    let n = Unix.read Unix.stdin buf 0 1 in
-    if n = 0 then None else Some (Bytes.get buf 0)
+  (* Input reading with Escape Sequence handling *)
+  type key = 
+    | Char of char
+    | Enter
+    | Backspace
+    | Up
+    | Down
+    | Esc
+    | Unknown
+
+  let read_key () =
+    let buf = Bytes.create 3 in
+    match Unix.read Unix.stdin buf 0 1 with
+    | 0 -> None
+    | _ ->
+      let c = Bytes.get buf 0 in
+      match c with
+      | '\027' -> (* Escape sequence? *)
+          let old_vmin = (Unix.tcgetattr Unix.stdin).c_vmin in
+          let old_vtime = (Unix.tcgetattr Unix.stdin).c_vtime in
+          (* Set non-blocking read to check for sequence *)
+          let termios = Unix.tcgetattr Unix.stdin in
+          Unix.tcsetattr Unix.stdin Unix.TCSANOW { termios with c_vmin = 0; c_vtime = 0 };
+          
+          let res = 
+            match Unix.read Unix.stdin buf 1 2 with
+            | 0 -> Esc (* Just Esc *)
+            | n ->
+              if n >= 2 && Bytes.get buf 1 = '[' then
+                match Bytes.get buf 2 with
+                | 'A' -> Up
+                | 'B' -> Down
+                | _ -> Unknown
+              else Esc (* Unknown sequence or incomplete, treat as Esc for safety *)
+          in
+          (* Restore blocking *)
+          Unix.tcsetattr Unix.stdin Unix.TCSANOW { termios with c_vmin = old_vmin; c_vtime = old_vtime };
+          Some res
+      | '\n' | '\r' -> Some Enter
+      | '\127' -> Some Backspace
+      | c -> Some (Char c)
 
   (* State *)
   type state = {
@@ -64,12 +100,11 @@ module TUI = struct
     scroll_offset : int;
   }
 
+  let truncate s len =
+    if String.length s <= len then s
+    else String.sub s 0 (len - 3) ^ "..."
+
   let render state display_rows =
-    (* Move cursor up to overwrite previous render *)
-    (* We assume we render display_rows + 1 (status line) lines *)
-    (* Clear screen area done by overwriting? or clearing? *)
-    (* Proper way: Print lines. Next render, move up N lines and print again. *)
-    
     let status_line = Printf.sprintf "> %s" state.query in
     output_string stdout (clear_line ^ status_line ^ "\n");
     
@@ -78,24 +113,22 @@ module TUI = struct
       else
         let line_idx = idx + state.scroll_offset in
         if line_idx >= List.length state.filtered then
-           output_string stdout (clear_line ^ "~\n") (* Empty line *)
+           output_string stdout (clear_line ^ "~\n")
         else
           let cand = List.nth state.filtered line_idx in
           let prefix = if line_idx = state.selected_idx then "> " else "  " in
-          (* Highlights? text formatting? Keep simple. *)
-          (* Handle ansi strip? Assume simple text. *)
-          (* Highlight selected *)
+          (* Truncate to avoid wrapping issues *)
+          let display_cand = truncate cand 75 in 
           let line = 
             if line_idx = state.selected_idx then
-               esc ^ "[1;32m" ^ prefix ^ cand ^ esc ^ "[0m"
-            else prefix ^ cand
+               esc ^ "[1;32m" ^ prefix ^ display_cand ^ esc ^ "[0m"
+            else prefix ^ display_cand
           in
           output_string stdout (clear_line ^ line ^ "\n");
           print_candidates (idx + 1) (count + 1)
     in
     print_candidates 0 0;
     
-    (* Move cursor back to input line end? No, hide cursor generally. *)
     Printf.printf "%s" (move_up (display_rows + 1));
     flush stdout
 
@@ -104,47 +137,55 @@ module TUI = struct
     output_string stdout hide_cursor;
     
     let rec aux state =
-      render state 10; (* Display 10 rows *)
+      render state 10;
       
-      match read_char () with
+      match read_key () with
       | None -> None
-      | Some c ->
-        let code = Char.code c in
-        match code with
-        | 3 (* Ctrl-C *) | 27 (* Esc *) -> None
-        | 10 | 13 (* Enter *) -> 
+      | Some key ->
+        match key with
+        | Esc -> None
+        | Enter -> 
              if state.selected_idx < List.length state.filtered then
                Some (List.nth state.filtered state.selected_idx)
              else None
-        | 127 (* Backspace *) ->
+        | Backspace ->
              let q = state.query in
              let len = String.length q in
              let new_q = if len > 0 then String.sub q 0 (len - 1) else q in
              let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state.orig_candidates in
              aux { state with query = new_q; filtered = new_filtered; selected_idx = 0; scroll_offset = 0 }
-        | _ ->
-             (* Basic char input *)
-             if code >= 32 && code <= 126 then
+        | Up ->
+             let sel = max 0 (state.selected_idx - 1) in
+             let scroll = 
+               if sel < state.scroll_offset then sel 
+               else state.scroll_offset 
+             in
+             aux { state with selected_idx = sel; scroll_offset = scroll }
+        | Down ->
+             let sel = min (List.length state.filtered - 1) (state.selected_idx + 1) in
+             let scroll = 
+               if sel >= state.scroll_offset + 10 then sel - 9
+               else state.scroll_offset
+             in
+             aux { state with selected_idx = sel; scroll_offset = scroll }
+        | Char c ->
+             let code = Char.code c in
+             (* Support C-p / C-n as well *)
+             if code = 14 then (* C-n *)
+                 let sel = min (List.length state.filtered - 1) (state.selected_idx + 1) in
+                 let scroll = if sel >= state.scroll_offset + 10 then sel - 9 else state.scroll_offset in
+                 aux { state with selected_idx = sel; scroll_offset = scroll }
+             else if code = 16 then (* C-p *)
+                 let sel = max 0 (state.selected_idx - 1) in
+                 let scroll = if sel < state.scroll_offset then sel else state.scroll_offset in
+                 aux { state with selected_idx = sel; scroll_offset = scroll }
+             else if code >= 32 && code <= 126 then
                let new_q = state.query ^ String.make 1 c in
                let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state.orig_candidates in
                aux { state with query = new_q; filtered = new_filtered; selected_idx = 0; scroll_offset = 0 }
              else
-               (* Handle arrows (Esc [ A / B) *)
-               (* If Esc, we handled above. But read might give sequence. 
-                  read_char only reads 1 byte.
-                  If keys send multiple bytes, we need to read them.
-                  Simplification: Just support C-n/C-p for Up/Down or simple chars.
-                  Arrow keys are \027[A etc. We need a parser.
-                  For now: Ctrl-N (14) = Down, Ctrl-P (16) = Up.
-               *)
-               match code with
-               | 14 (* C-n *) -> 
-                   let sel = min (List.length state.filtered - 1) (state.selected_idx + 1) in
-                   aux { state with selected_idx = sel }
-               | 16 (* C-p *) ->
-                   let sel = max 0 (state.selected_idx - 1) in
-                   aux { state with selected_idx = sel }
-               | _ -> aux state
+               aux state
+        | Unknown -> aux state
     in
     
     let init_state = {
@@ -157,8 +198,6 @@ module TUI = struct
     
     try
       let res = aux init_state in
-      (* Cleanup TUI drawing area? *)
-      (* Move to bottom and print newline to preserve output? *)
       Printf.printf "%s" (csi ^ string_of_int 11 ^ "B"); 
       output_string stdout show_cursor;
       disable_raw orig_termios;
