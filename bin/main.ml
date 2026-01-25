@@ -2,7 +2,7 @@ open Cmdliner
 open Quasifind
 
 (* Wrapper for run to return Cmdliner return type *)
-let run root_dir expr_str_opt max_depth follow_symlinks exclude_hidden jobs help_short =
+let run root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs help_short =
   if help_short then `Help (`Auto, None)
   else match expr_str_opt with
   | None -> `Help (`Auto, None) (* Show help if no expression provided *)
@@ -20,7 +20,7 @@ let run root_dir expr_str_opt max_depth follow_symlinks exclude_hidden jobs help
       Traversal.strategy;
       max_depth;
       follow_symlinks;
-      exclude_hidden;
+      include_hidden;
     } in
 
     (* 1. Parse *)
@@ -63,9 +63,9 @@ let follow_symlinks =
   let doc = "Follow symbolic links." in
   Arg.(value & flag & info ["follow"; "L"] ~doc)
 
-let exclude_hidden =
-  let doc = "Exclude hidden files and directories (starting with .)." in
-  Arg.(value & flag & info ["exclude-hidden"] ~doc)
+let include_hidden =
+  let doc = "Include hidden files and directories (starting with .)." in
+  Arg.(value & flag & info ["hidden"; "H"] ~doc)
 
 let jobs =
   let doc = "Number of parallel jobs (threads). Default is 1 (sequential)." in
@@ -78,6 +78,6 @@ let help_short =
 let cmd =
   let doc = "Quasi-find: a typed, find-like filesystem query tool" in
   let info = Cmd.info "quasifind" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(ret (const run $ root_dir $ expr_str $ max_depth $ follow_symlinks $ exclude_hidden $ jobs $ help_short))
+  Cmd.v info Term.(ret (const run $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ help_short))
 
 let () = exit (Cmd.eval cmd)

@@ -10,7 +10,7 @@ type config = {
   strategy : strategy;
   max_depth : int option;
   follow_symlinks : bool;
-  exclude_hidden : bool;
+  include_hidden : bool;
 }
 
 type plan = {
@@ -49,8 +49,8 @@ let rec visit (cfg : config) depth emit dir_path =
     | entries ->
       Array.iter (fun name ->
         if name <> "." && name <> ".." then
-          (* Check exclude hidden *)
-          if cfg.exclude_hidden && String.starts_with ~prefix:"." name then ()
+          (* Check hidden *)
+          if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then ()
           else
             let full_path = Filename.concat dir_path name in
             try
@@ -91,7 +91,7 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
         | entries ->
           Array.iter (fun name ->
             if name <> "." && name <> ".." then
-              if cfg.exclude_hidden && String.starts_with ~prefix:"." name then ()
+              if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then ()
               else
                 let full_path = Filename.concat dir_path name in
                 try

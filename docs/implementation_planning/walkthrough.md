@@ -34,4 +34,4 @@
 - [x] Run against local directory (`quasifind . "true" -d 1` verified depth limit)
 - [x] Verify invalid syntax error reporting
 - [x] Verify help option (`-h` and no-args checks)
-- [x] Verify exclude hidden files (`--exclude-hidden` works on logic and integration level)
+- [x] Verify hidden file options (`--hidden` includes, default excludes)

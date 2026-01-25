@@ -42,7 +42,7 @@ let test_dfs () =
       Traversal.strategy = Traversal.DFS;
       max_depth = None;
       follow_symlinks = false;
-      exclude_hidden = false;
+      include_hidden = false;
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -60,7 +60,7 @@ let test_parallel () =
       Traversal.strategy = Traversal.Parallel 4;
       max_depth = None;
       follow_symlinks = false;
-      exclude_hidden = false;
+      include_hidden = false;
     } in
     let paths = collect_paths cfg root in
     let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
@@ -78,7 +78,7 @@ let test_filtering () =
       Traversal.strategy = Traversal.DFS;
       max_depth = None;
       follow_symlinks = false;
-      exclude_hidden = false;
+      include_hidden = false;
     } in
     (* Custom collect function with filtering enabled, mimicking main.ml *)
     let paths = ref [] in
@@ -109,7 +109,7 @@ let test_filtering () =
     teardown_test_dir root;
     raise e
 
-let test_exclude_hidden () =
+let test_hidden_flag () =
   let root = setup_test_dir () in
   (* Create hidden file *)
   let oc = open_out (Filename.concat root ".hidden") in
@@ -117,17 +117,29 @@ let test_exclude_hidden () =
   close_out oc;
   
   try
-    let cfg = {
+    (* Default: include_hidden = false (should exclude) *)
+    let cfg_default = {
       Traversal.strategy = Traversal.DFS;
       max_depth = None;
       follow_symlinks = false;
-      exclude_hidden = true;
+      include_hidden = false;
     } in
-    let paths = collect_paths cfg root in
-    let contains s = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
+    let paths_def = collect_paths cfg_default root in
+    let contains s paths = List.exists (fun p -> String.ends_with ~suffix:s p) paths in
     
-    check bool "find a.txt" true (contains "a.txt");
-    check bool "exclude .hidden" false (contains ".hidden");
+    check bool "default finds a.txt" true (contains "a.txt" paths_def);
+    check bool "default excludes .hidden" false (contains ".hidden" paths_def);
+
+    (* Explicit: include_hidden = true (should include) *)
+    let cfg_include = {
+      Traversal.strategy = Traversal.DFS;
+      max_depth = None;
+      follow_symlinks = false;
+      include_hidden = true;
+    } in
+    let paths_inc = collect_paths cfg_include root in
+    
+    check bool "explicit finds .hidden" true (contains ".hidden" paths_inc);
     
     teardown_test_dir root
   with e ->
@@ -139,7 +151,7 @@ let suite = [
     test_case "DFS" `Quick test_dfs;
     test_case "Parallel" `Quick test_parallel;
     test_case "Filtering" `Quick test_filtering;
-    test_case "Exclude Hidden" `Quick test_exclude_hidden;
+    test_case "Hidden Flag" `Quick test_hidden_flag;
   ]
 ]
 
