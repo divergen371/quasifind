@@ -19,6 +19,7 @@ depends: [
   "eio_main"
   "ppx_deriving"
   "alcotest"
+  "cmdliner"
   "odoc" {with-doc}
 ]
 build: [

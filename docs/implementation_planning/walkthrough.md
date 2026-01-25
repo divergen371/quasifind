@@ -11,8 +11,10 @@
 | `lib/quasifind/typecheck.ml` | Validates untyped AST, compiles regex, normalizes units                                                 |
 | `lib/quasifind/eval.ml`      | Pure evaluation logic for Typed AST vs File Entry                                                       |
 | `lib/quasifind/traversal.ml` | File system traversal engine. Supports DFS and Parallel (Eio) strategies. Includes Planner (Minimal A). |
+| `bin/main.ml`                | CLI entry point. Parses arguments and orchestrates the pipeline.                                        |
 | `test/test_quasifind.ml`     | Unit tests for all DSL components                                                                       |
 | `test/test_traversal.ml`     | Integration tests for traversal engine (filesystem operations)                                          |
+| `README.md`                  | User documentation and usage examples                                                                   |
 
 ## Verification Results
 
@@ -29,4 +31,5 @@
 
 ### Manual Verification
 
-- [ ] Run against local directory (Pending CLI implementation)
+- [x] Run against local directory (`quasifind . "true" -d 1` verified depth limit)
+- [x] Verify invalid syntax error reporting

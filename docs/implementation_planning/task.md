@@ -19,12 +19,12 @@
   - [x] `Planner` (Minimal A) の実装: path prefix の抽出 <!-- id: 23 -->
   - [x] **Eio** による並列走査実装 (Producer-Consumer / Stream) <!-- id: 24 -->
 
-- [ ] **Phase 4: CLI と統合** <!-- id: 30 -->
-  - [ ] CLI 引数解析 (cmdliner 推奨) <!-- id: 31 -->
-  - [ ] Main ループの実装 (Parse -> Typecheck -> Plan -> Traverse -> Eval -> Print) <!-- id: 32 -->
-  - [ ] エラーハンドリングと出力フォーマットの整備 <!-- id: 33 -->
+- [x] **Phase 4: CLI と統合** <!-- id: 30 -->
+  - [x] CLI 引数解析 (cmdliner 推奨) <!-- id: 31 -->
+  - [x] Main ループの実装 (Parse -> Typecheck -> Plan -> Traverse -> Eval -> Print) <!-- id: 32 -->
+  - [x] エラーハンドリングと出力フォーマットの整備 <!-- id: 33 -->
 
-- [ ] **Phase 5: 検証とドキュメント** <!-- id: 40 -->
-  - [ ] 結合テスト (実際のファイルシステムを用いたテスト) <!-- id: 41 -->
-  - [ ] `README.md` の整備 (find との違い、使い方) <!-- id: 42 -->
-  - [ ] 最終確認 (Walkthrough) <!-- id: 43 -->
+- [x] **Phase 5: 検証とドキュメント** <!-- id: 40 -->
+  - [x] 結合テスト (実際のファイルシステムを用いたテスト) <!-- id: 41 -->
+  - [x] `README.md` の整備 (find との違い、使い方) <!-- id: 42 -->
+  - [x] 最終確認 (Walkthrough) <!-- id: 43 -->

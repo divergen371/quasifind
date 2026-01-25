@@ -52,7 +52,7 @@ let stat_entry path name kind =
 let rec visit (cfg : config) depth emit dir_path =
   (* Check depth limit *)
   match cfg.max_depth with
-  | Some max_d when depth > max_d -> ()
+  | Some max_d when depth >= max_d -> ()
   | _ ->
     (* Read directory entries *)
     match Sys.readdir dir_path with
@@ -98,7 +98,7 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
 
   let rec visit_parallel depth dir_path =
     match cfg.max_depth with
-    | Some max_d when depth > max_d -> ()
+    | Some max_d when depth >= max_d -> ()
     | _ ->
       Eio.Semaphore.acquire sem;
       Fun.protect ~finally:(fun () -> Eio.Semaphore.release sem) (fun () ->
