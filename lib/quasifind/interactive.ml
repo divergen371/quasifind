@@ -100,31 +100,47 @@ module TUI = struct
     scroll_offset : int;
   }
 
+  let get_term_size () =
+    try
+      let ic = Unix.open_process_in "tput cols" in
+      let cols = try int_of_string (input_line ic) with _ -> 80 in
+      ignore (Unix.close_process_in ic);
+      let ic = Unix.open_process_in "tput lines" in
+      let rows = try int_of_string (input_line ic) with _ -> 24 in
+      ignore (Unix.close_process_in ic);
+      (cols, rows)
+    with _ -> (80, 24)
+
   let truncate s len =
+    let len = max 10 len in (* Minimum functional width *)
     if String.length s <= len then s
     else String.sub s 0 (len - 3) ^ "..."
 
   let render state display_rows =
+    let (cols, _) = get_term_size () in
+    (* Status line *)
     let status_line = Printf.sprintf "> %s" state.query in
-    output_string stdout (clear_line ^ status_line ^ "\n");
+    output_string stdout (clear_line ^ "\r" ^ truncate status_line (cols - 1) ^ "\n");
     
     let rec print_candidates idx count =
       if count >= display_rows then ()
       else
         let line_idx = idx + state.scroll_offset in
         if line_idx >= List.length state.filtered then
-           output_string stdout (clear_line ^ "~\n")
+           output_string stdout (clear_line ^ "\r~\n")
         else
           let cand = List.nth state.filtered line_idx in
           let prefix = if line_idx = state.selected_idx then "> " else "  " in
-          (* Truncate to avoid wrapping issues *)
-          let display_cand = truncate cand 75 in 
+          (* Dynamic truncation *)
+          (* 4 chars for prefix/margin *)
+          let available_width = max 10 (cols - 4) in
+          let display_cand = truncate cand available_width in 
           let line = 
             if line_idx = state.selected_idx then
                esc ^ "[1;32m" ^ prefix ^ display_cand ^ esc ^ "[0m"
             else prefix ^ display_cand
           in
-          output_string stdout (clear_line ^ line ^ "\n");
+          output_string stdout (clear_line ^ "\r" ^ line ^ "\n");
           print_candidates (idx + 1) (count + 1)
     in
     print_candidates 0 0;

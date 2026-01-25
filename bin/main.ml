@@ -150,8 +150,11 @@ let () =
   let n = Array.length argv in
   if n > 1 && argv.(1) = "history" then
     (* Shift argv for history command: PROGRAM history args... -> PROGRAM args... *)
-    (* We keep argv.(0) as program name, skip argv.(1), keep rest *)
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v history_info history_t))
+  else if n > 1 && argv.(1) = "search" then
+    (* Shift argv for search command: PROGRAM search args... -> PROGRAM args... *)
+    let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
+    exit (Cmd.eval ~argv:new_argv (Cmd.v search_info search_t))
   else
     exit (Cmd.eval (Cmd.v search_info search_t))
