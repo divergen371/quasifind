@@ -57,16 +57,32 @@ let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs e
 
 (* --- History Command --- *)
 
+(* Shell quoting helper *)
+let quote_arg s =
+  if s = "" then "''"
+  else if String.contains s ' ' || String.contains s '"' || String.contains s '\'' || String.contains s '(' || String.contains s ')' then
+    let b = Buffer.create (String.length s + 2) in
+    Buffer.add_char b '\'';
+    String.iter (fun c ->
+      if c = '\'' then Buffer.add_string b "'\\''"
+      else Buffer.add_char b c
+    ) s;
+    Buffer.add_char b '\'';
+    Buffer.contents b
+  else s
+
+let quote_command cmd_list =
+  String.concat " " (List.map quote_arg cmd_list)
+
 let format_entry (e : History.entry) =
   let time = Unix.localtime e.timestamp in
   let time_str = Printf.sprintf "%04d-%02d-%02d %02d:%02d" 
     (time.tm_year + 1900) (time.tm_mon + 1) time.tm_mday time.tm_hour time.tm_min 
   in
-  (* Reconstruct command string from list *)
-  (* Skip first arg if it is executable path? usually ["quasifind"; "." ...] *)
-  let cmd_str = String.concat " " e.command in
+  (* Reconstruct command string with quoting *)
+  let cmd_str = quote_command e.command in
   Printf.sprintf "[%s] %s (%d results)" time_str cmd_str e.results_count
-
+ 
 let run_history exec =
   let history = History.load () in
   if history = [] then (
@@ -74,14 +90,6 @@ let run_history exec =
     `Ok ()
   ) else
     let candidates = List.map format_entry history in
-    (* Show latest first? they are loaded from append log, so last is latest. *)
-    (* History.load implementation reverses lines? 
-       In History.ml: `lines := line :: !lines` (reverses order read) 
-       Then `(List.rev !lines)` (restores file order: oldest first).
-       Then `List.filter_map ...`.
-       So `history` list is Oldest -> Latest.
-       User usually wants Latest first.
-    *)
     let candidates = List.rev candidates in
     let history_rev = List.rev history in
     
@@ -96,7 +104,7 @@ let run_history exec =
           (match find_idx 0 candidates with
            | Some idx ->
                let entry = List.nth history_rev idx in
-               let cmd_str = String.concat " " entry.command in
+               let cmd_str = quote_command entry.command in
                Printf.printf "%s\n" cmd_str;
                `Ok ()
            | None -> 
