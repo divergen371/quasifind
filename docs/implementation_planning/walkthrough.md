@@ -37,7 +37,7 @@
 - [x] Verify hidden file options (`--hidden` includes, default excludes)
 - [x] Verify command execution (`-x` per file, `-X` batch) with `{}` placeholder
 - [x] Verify history recording (`quasifind . ...` adds entry)
-- [x] Verify history listing (`quasifind history`)
+- [x] Verify history listing (`quasifind history`) & output selected command (`-e`)
 - [x] Verify history listing (`quasifind history`)
 - [x] Verify builtin TUI / FZF integration (logic implemented & non-TTY handled)
 - [x] Verify configuration loading (`~/.config/quasifind/config.json`)

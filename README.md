@@ -164,6 +164,20 @@ quasifind . 'true' -d 2
   - `builtin`: 内蔵の簡易検索機能を使用します。
 - **ignore**: 検索から常に除外するパターン（Glob形式）のリストです。隠しファイル設定 (`--hidden`) よりも優先されません（隠しファイルかつignore対象の場合は除外されます）。
 
+## シェル連携 (Shell Integration)
+
+`quasifind history --exec` は選択されたコマンドを標準出力に出力します。
+シェルの機能と組み合わせることで、選択したコマンドを入力バッファに挿入することができます。
+
+### Zsh
+
+`.zshrc` に以下のエイリアスを追加することをお勧めします。
+
+```zsh
+# qh: 履歴から選択してコマンドラインに挿入
+alias qh='print -z $(quasifind history -e)'
+```
+
 ## ライセンス
 
 MIT License

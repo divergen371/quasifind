@@ -119,14 +119,14 @@ module TUI = struct
   let render state display_rows (cols, _) =
     (* Status line *)
     let status_line = Printf.sprintf "> %s" state.query in
-    output_string stdout (clear_line ^ "\r" ^ truncate status_line (cols - 1) ^ "\n");
+    output_string stderr (clear_line ^ "\r" ^ truncate status_line (cols - 1) ^ "\n");
     
     let rec print_candidates idx count =
       if count >= display_rows then ()
       else
         let line_idx = idx + state.scroll_offset in
         if line_idx >= List.length state.filtered then
-           output_string stdout (clear_line ^ "\r~\n")
+           output_string stderr (clear_line ^ "\r~\n")
         else
           let cand = List.nth state.filtered line_idx in
           let prefix = if line_idx = state.selected_idx then "> " else "  " in
@@ -138,17 +138,17 @@ module TUI = struct
                esc ^ "[1;32m" ^ prefix ^ display_cand ^ esc ^ "[0m"
             else prefix ^ display_cand
           in
-          output_string stdout (clear_line ^ "\r" ^ line ^ "\n");
+          output_string stderr (clear_line ^ "\r" ^ line ^ "\n");
           print_candidates (idx + 1) (count + 1)
     in
     print_candidates 0 0;
     
-    Printf.printf "%s" (move_up (display_rows + 1));
-    flush stdout
+    Printf.eprintf "%s" (move_up (display_rows + 1));
+    flush stderr
 
   let loop candidates =
     let orig_termios = enable_raw () in
-    output_string stdout hide_cursor;
+    output_string stderr hide_cursor;
     let term_dims = get_term_size () in
     
     let rec aux state =
@@ -213,12 +213,12 @@ module TUI = struct
     
     try
       let res = aux init_state in
-      Printf.printf "%s" (csi ^ string_of_int 11 ^ "B"); 
-      output_string stdout show_cursor;
+      Printf.eprintf "%s" (csi ^ string_of_int 11 ^ "B"); 
+      output_string stderr show_cursor;
       disable_raw orig_termios;
       res
     with e ->
-      output_string stdout show_cursor;
+      output_string stderr show_cursor;
       disable_raw orig_termios;
       raise e
 end
