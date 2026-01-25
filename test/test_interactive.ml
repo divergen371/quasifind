@@ -25,7 +25,7 @@ let test_escape_sequences () =
   check string "show_cursor" "\027[?25h" Interactive.TUI.show_cursor
 
 let test_is_atty_function_exists () =
-  (* Just verify is_atty doesn't crash when called *)
+  (* SMOKE TEST: Just verify is_atty doesn't crash when called - result depends on environment *)
   let _ = Interactive.is_atty () in
   ()
 

@@ -19,22 +19,22 @@ let test_event_type_variants () =
   )
 
 let test_log_event_none_channel () =
-  (* Verify log_event with None doesn't crash *)
+  (* SMOKE TEST: Verify log_event with None doesn't crash - no observable side effect *)
   Watcher.log_event ?log_channel:None Watcher.New "/test/path";
   ()
 
 let test_send_webhook_none () =
-  (* Verify send_webhook with None doesn't crash or do anything *)
+  (* SMOKE TEST: Verify send_webhook with None doesn't crash or do anything *)
   Watcher.send_webhook ?webhook_url:None Watcher.New "/test/path";
   ()
 
 let test_send_email_none () =
-  (* Verify send_email with None doesn't crash *)
+  (* SMOKE TEST: Verify send_email with None doesn't crash *)
   Watcher.send_email ?email_addr:None Watcher.New "/test/path";
   ()
 
 let test_send_slack_none () =
-  (* Verify send_slack with None doesn't crash *)
+  (* SMOKE TEST: Verify send_slack with None doesn't crash *)
   Watcher.send_slack ?slack_url:None Watcher.New "/test/path";
   ()
 

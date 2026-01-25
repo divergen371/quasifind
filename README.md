@@ -260,6 +260,39 @@ quasifind --update-rules
 alias qh='print -z $(quasifind history -e)'
 ```
 
+## テスト
+
+テストは [Alcotest](https://github.com/mirage/alcotest) と [QCheck](https://github.com/c-cube/qcheck) (Property-Based Testing) を使用しています。
+
+### テスト実行
+
+```bash
+dune runtest
+```
+
+### テストカバレッジ
+
+| モジュール            | テストタイプ           | テスト数       |
+| --------------------- | ---------------------- | -------------- |
+| Parser/Typecheck/Eval | ユニットテスト         | 6              |
+| Entropy               | ユニットテスト         | 2              |
+| Traversal             | ユニットテスト         | 4              |
+| Content               | ユニットテスト         | 2              |
+| Ghost                 | モックテスト           | 3              |
+| Rules                 | ユニットテスト         | 5              |
+| Suspicious            | ユニットテスト         | 4              |
+| Exec                  | ユニットテスト         | 4              |
+| Profile               | JSON往復テスト         | 2              |
+| History               | JSON往復テスト         | 3              |
+| Config                | JSON往復テスト         | 3              |
+| RuleConverter         | ユニットテスト         | 3              |
+| Interactive           | ユニット + スモーク    | 4              |
+| Stealth               | スモークテスト         | 3              |
+| Watcher               | ユニット + スモーク    | 6              |
+| Size/Time Props       | プロパティベーステスト | 2 (2000ケース) |
+
+**注**: **スモークテスト** はシステム依存の関数（`is_available`, `is_atty`, 通知関数など）に対して、クラッシュしないことのみを確認するテストです。実際の戻り値や副作用は検証していません。
+
 ## ライセンス
 
 MIT License

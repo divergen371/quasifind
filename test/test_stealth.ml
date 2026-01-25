@@ -10,12 +10,12 @@ let test_default_fake_name () =
   check string "default name" "[kworker/0:0]" Stealth.default_fake_name
 
 let test_is_available_no_crash () =
-  (* Just verify it doesn't crash - actual result depends on system *)
+  (* SMOKE TEST: Just verify it doesn't crash - actual result depends on system/permissions *)
   let _ = Stealth.is_available () in
   ()
 
 let test_clear_argv_no_crash () =
-  (* Verify clear_argv doesn't crash *)
+  (* SMOKE TEST: Verify clear_argv doesn't crash - no observable side effect to verify *)
   Stealth.clear_argv ()
 
 let suite = [
