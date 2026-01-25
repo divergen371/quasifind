@@ -1,8 +1,17 @@
 (library
  (name quasifind)
  (public_name quasifind)
- (modules ast parser typecheck eval traversal exec)
- (libraries angstrom re eio eio_main)
+ (modules
+  ast
+  parser
+  typecheck
+  eval
+  traversal
+  exec
+  history
+  fuzzy_matcher
+  interactive)
+ (libraries angstrom re eio eio_main yojson)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))
 

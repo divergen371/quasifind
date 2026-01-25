@@ -36,3 +36,6 @@
 - [x] Verify help option (`-h` and no-args checks)
 - [x] Verify hidden file options (`--hidden` includes, default excludes)
 - [x] Verify command execution (`-x` per file, `-X` batch) with `{}` placeholder
+- [x] Verify history recording (`quasifind . ...` adds entry)
+- [x] Verify history listing (`quasifind history`)
+- [x] Verify builtin TUI / FZF integration (logic implemented & non-TTY handled)

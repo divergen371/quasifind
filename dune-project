@@ -20,7 +20,17 @@
  (synopsis "A find-like filesystem query engine with a typed DSL")
  (description
   "Quasi-find is an experimental, typed DSL-based alternative to find")
- (depends ocaml re angstrom dune eio eio_main ppx_deriving alcotest cmdliner)
+ (depends
+  ocaml
+  re
+  angstrom
+  dune
+  eio
+  eio_main
+  ppx_deriving
+  alcotest
+  cmdliner
+  yojson)
  (tags
   ("add topics" "to describe" your project)))
 

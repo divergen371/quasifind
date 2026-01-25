@@ -1,121 +1,155 @@
 open Cmdliner
 open Quasifind
 
-(* Wrapper for run to return Cmdliner return type *)
-let run root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command help_short =
+(* --- Search Command --- *)
+
+let search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command help_short =
   if help_short then `Help (`Auto, None)
   else match expr_str_opt with
-  | None -> `Help (`Auto, None) (* Show help if no expression provided *)
+  | None -> `Help (`Auto, None)
   | Some expr_str ->
-    let concurrency = match jobs with
-      | None -> 1 
-      | Some n -> n
-    in
-    let strategy = 
-      if concurrency > 1 then Traversal.Parallel concurrency
-      else Traversal.DFS
-    in
-    
-    let cfg = {
-      Traversal.strategy;
-      max_depth;
-      follow_symlinks;
-      include_hidden;
-    } in
+    let concurrency = match jobs with | None -> 1 | Some n -> n in
+    let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
+    let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden } in
 
-    (* 1. Parse *)
     match Parser.parse expr_str with
-    | Error msg ->
-        `Error (false, "Parse Error: " ^ msg)
+    | Error msg -> `Error (false, "Parse Error: " ^ msg)
     | Ok untyped_ast ->
-        (* 2. Typecheck *)
         match Typecheck.check untyped_ast with
-        | Error err ->
-            `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
+        | Error err -> `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
         | Ok typed_ast ->
-            (* 3. Traverse & Eval *)
             Eio_main.run @@ fun _env ->
-            (* Use absolute path for root if possible, or leave as is. Traversal handles it. *)
             let now = Unix.gettimeofday () in
             let mgr = Eio.Stdenv.process_mgr _env in
             
-            (* For batch execution, we need to collect paths *)
             let batch_paths = ref [] in
+            let all_found_paths = ref [] in (* For history *)
 
             Traversal.traverse cfg root_dir typed_ast (fun entry ->
-              (* 4. Eval *)
               if Eval.eval now typed_ast entry then (
-                (* 5. Output / Exec *)
+                (* Collect for history *)
+                all_found_paths := entry.path :: !all_found_paths;
+
                 match exec_command with
-                | Some cmd_tmpl ->
-                    (* Execute per file *)
-                    Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
-                | None ->
-                    (* Only accumulate for batch or print if no batch *)
-                    ()
-                ;
+                | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl entry.path
+                | None -> ();
                 
                 match exec_batch_command with
                 | Some _ -> batch_paths := entry.path :: !batch_paths
-                | None -> ()
-                ;
+                | None -> ();
                 
-                (* Print if no exec commands are defined *)
                 if Option.is_none exec_command && Option.is_none exec_batch_command then
                    Printf.printf "%s\n%!" entry.path
               )
             );
             
-            (* Batch execution *)
             (match exec_batch_command with
             | Some cmd_tmpl ->
                 if !batch_paths <> [] then
                   Exec.run_batch ~mgr ~sw:() cmd_tmpl (List.rev !batch_paths)
             | None -> ());
             
+            (* Save History *)
+            History.add ~cmd:Sys.argv ~results:(List.rev !all_found_paths);
+            
             `Ok ()
 
-(* CLI Definitions *)
+(* --- History Command --- *)
 
-let root_dir =
-  let doc = "Root directory to search." in
-  Arg.(value & pos 0 string "." & info [] ~docv:"DIR" ~doc)
+let format_entry (e : History.entry) =
+  let time = Unix.localtime e.timestamp in
+  let time_str = Printf.sprintf "%04d-%02d-%02d %02d:%02d" 
+    (time.tm_year + 1900) (time.tm_mon + 1) time.tm_mday time.tm_hour time.tm_min 
+  in
+  (* Reconstruct command string from list *)
+  (* Skip first arg if it is executable path? usually ["quasifind"; "." ...] *)
+  let cmd_str = String.concat " " e.command in
+  Printf.sprintf "[%s] %s (%d results)" time_str cmd_str e.results_count
 
-let expr_str =
-  let doc = "DSL expression. Required unless -h is used." in
-  Arg.(value & pos 1 (some string) None & info [] ~docv:"EXPR" ~doc)
+let run_history exec =
+  let history = History.load () in
+  if history = [] then (
+    Printf.printf "No history found.\n";
+    `Ok ()
+  ) else
+    let candidates = List.map format_entry history in
+    (* Show latest first? they are loaded from append log, so last is latest. *)
+    (* History.load implementation reverses lines? 
+       In History.ml: `lines := line :: !lines` (reverses order read) 
+       Then `(List.rev !lines)` (restores file order: oldest first).
+       Then `List.filter_map ...`.
+       So `history` list is Oldest -> Latest.
+       User usually wants Latest first.
+    *)
+    let candidates = List.rev candidates in
+    let history_rev = List.rev history in
+    
+    if exec then
+      match Interactive.select candidates with
+      | Some selection ->
+          (* Find corresponding entry. Selection string matches format. *)
+          (* Simple lookup by index or string match? *)
+          (* Distinct strings? Formatting includes timestamp, so likely unique unless spamming. *)
+          (* Let's find index in candidates list *)
+          let rec find_idx idx = function
+            | [] -> None
+            | c :: cs -> if c = selection then Some idx else find_idx (idx + 1) cs
+          in
+          (match find_idx 0 candidates with
+           | Some idx ->
+               let entry = List.nth history_rev idx in
+               (* Execute command *)
+               (* We need to re-run quasifind with args. *)
+               (* entry.command is ["quasifind"; "arg"; ...] *)
+               (* We can use Unix.execv or just Sys.command. *)
+               (* Sys.command expects string. execv expects array. *)
+               (* entry.command is string list. *)
+               (* Warning: re-executing might cause recursion if it saves history again.
+                  Ideally we shouldn't save history for history execution? 
+                  Or executing it adds a NEW history entry (correct behavior).
+               *)
+               let prog = List.hd entry.command in (* might be "quasifind" or path *)
+               let args = Array.of_list entry.command in
+               Unix.execvp prog args (* execvp searches PATH *)
+           | None -> `Ok () (* execution cancelled or not found *)
+          )
+      | None -> `Ok ()
+    else (
+      List.iter (fun c -> Printf.printf "%s\n" c) candidates;
+      `Ok ()
+    )
 
-let max_depth =
-  let doc = "Maximum depth to traverse." in
-  Arg.(value & opt (some int) None & info ["max-depth"; "d"] ~docv:"DEPTH" ~doc)
+(* --- CLI Definitions --- *)
 
-let follow_symlinks =
-  let doc = "Follow symbolic links." in
-  Arg.(value & flag & info ["follow"; "L"] ~doc)
+(* --- CLI Definitions --- *)
 
-let include_hidden =
-  let doc = "Include hidden files and directories (starting with .)." in
-  Arg.(value & flag & info ["hidden"; "H"] ~doc)
+(* Shared args for search *)
+let root_dir = Arg.(value & pos 0 string "." & info [] ~docv:"DIR" ~doc:"Root directory to search.")
+let expr_str = Arg.(value & pos 1 (some string) None & info [] ~docv:"EXPR" ~doc:"DSL expression. Required unless -h is used.")
+let max_depth = Arg.(value & opt (some int) None & info ["max-depth"; "d"] ~docv:"DEPTH" ~doc:"Maximum depth to traverse.")
+let follow_symlinks = Arg.(value & flag & info ["follow"; "L"] ~doc:"Follow symbolic links.")
+let include_hidden = Arg.(value & flag & info ["hidden"; "H"] ~doc:"Include hidden files and directories.")
+let jobs = Arg.(value & opt (some int) None & info ["jobs"; "j"] ~docv:"JOBS" ~doc:"Number of parallel jobs.")
+let exec_command = Arg.(value & opt (some string) None & info ["exec"; "x"] ~docv:"CMD" ~doc:"Execute command per file.")
+let exec_batch_command = Arg.(value & opt (some string) None & info ["exec-batch"; "X"] ~docv:"CMD" ~doc:"Execute command batch.")
+let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let jobs =
-  let doc = "Number of parallel jobs (threads). Default is 1 (sequential)." in
-  Arg.(value & opt (some int) None & info ["jobs"; "j"] ~docv:"JOBS" ~doc)
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ help_short))
 
-let exec_command =
-  let doc = "Execute command for each found file. {} is replaced by the path." in
-  Arg.(value & opt (some string) None & info ["exec"; "x"] ~docv:"CMD" ~doc)
+let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 
-let exec_batch_command =
-  let doc = "Execute command once with all found files as arguments. {} is replaced by all paths." in
-  Arg.(value & opt (some string) None & info ["exec-batch"; "X"] ~docv:"CMD" ~doc)
+(* History args *)
+let history_exec = Arg.(value & flag & info ["exec"; "e"] ~doc:"Select and execute a command from history.")
+let history_t = Term.(ret (const run_history $ history_exec))
+let history_info = Cmd.info "quasifind history" ~doc:"Show or execute command history"
 
-let help_short =
-  let doc = "Show this help." in
-  Arg.(value & flag & info ["h"] ~doc)
-
-let cmd =
-  let doc = "Quasi-find: a typed, find-like filesystem query tool" in
-  let info = Cmd.info "quasifind" ~version:"0.1.0" ~doc in
-  Cmd.v info Term.(ret (const run $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ help_short))
-
-let () = exit (Cmd.eval cmd)
+let () = 
+  let argv = Sys.argv in
+  let n = Array.length argv in
+  if n > 1 && argv.(1) = "history" then
+    (* Shift argv for history command: PROGRAM history args... -> PROGRAM args... *)
+    (* We keep argv.(0) as program name, skip argv.(1), keep rest *)
+    let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
+    exit (Cmd.eval ~argv:new_argv (Cmd.v history_info history_t))
+  else
+    exit (Cmd.eval (Cmd.v search_info search_t))
