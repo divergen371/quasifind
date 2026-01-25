@@ -41,9 +41,9 @@ type source_def = {
 let sources = [
   {
     name = "Generated: Suspicious WebShell Attributes";
-    (* Using a raw gist or similar for demo. Here we simulate the content if URL fails or we can use a simpler approach for the demo. *)
-    url = "https://raw.githubusercontent.com/payloadbox/command-injection-payload-list/master/README.md"; (* Just a placeholder for demo structure *)
-    kind = Extensions; (* We will treat this as a generic list for demo purposes *)
+    (* Using SecLists common web extensions as a reliable source *)
+    url = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/web-extensions.txt";
+    kind = Extensions;
   }
 ]
 
@@ -51,33 +51,42 @@ let sources = [
 let update_from_source () =
   Printf.printf "Fetching external security lists...\n%!";
   
-  (* 1. Fetch Suspicious Extensions (Simulated for Demo Stability) *)
-  (* Let's simulate fetching a list of extensions often used for webshells *)
-  let webshell_exts = ["php"; "phtml"; "php5"; "jsp"; "asp"; "aspx"; "cgi"; "pl"] in
-  (* In real usage: fetch_url "..." |> to list *)
-  
-  let rule_webshell_ext = {
-    Rule_loader.name = "Generated: WebShell Extensions";
-    expr = Printf.sprintf "name =~ /\\.(%s)$/" (list_to_regex_alt webshell_exts)
-  } in
+  let generated_rules = 
+    List.fold_left (fun acc source ->
+      Printf.printf "Fetching %s from %s...\n%!" source.name source.url;
+      match fetch_url source.url with
+      | Ok items ->
+          (match source.kind with
+           | Extensions ->
+               let rule = {
+                 Rule_loader.name = source.name;
+                 expr = Printf.sprintf "name =~ /\\.(%s)$/" (list_to_regex_alt items)
+               } in
+               rule :: acc
+           | Filenames ->
+               let rule = {
+                 Rule_loader.name = source.name;
+                 expr = Printf.sprintf "name =~ /^(%s)$/" (list_to_regex_alt items)
+               } in
+               rule :: acc
+          )
+      | Error msg ->
+          Printf.eprintf "Warning: %s. Using fallback/skipped.\n%!" msg;
+          acc
+    ) [] sources
+  in
 
-  (* 2. Fetch Suspicious Filenames (Simulated) *)
-  let susp_files = ["id_rsa"; ".aws/credentials"; "shadow"; "passwd"] in
-  
-  let rule_sensitive_files = {
-    Rule_loader.name = "Generated: Sensitive Files";
-    expr = Printf.sprintf "name =~ /^(%s)$/" (list_to_regex_alt susp_files)
-  } in
-
-  (* Combine with existing rules *)
-  let current_rules = match Rule_loader.load_rules () with Some rs -> rs.rules | None -> [] in
-  
-  (* Remove old generated rules to avoid duplication/stale data *)
-  let kept_rules = List.filter (fun (r : Rule_loader.rule_def) -> not (String.starts_with ~prefix:"Generated:" r.name)) current_rules in
-  
-  let new_rules = kept_rules @ [rule_webshell_ext; rule_sensitive_files] in
-  
-  let new_rule_set = { Rule_loader.version = "1.1"; rules = new_rules } in
-  Rule_loader.save_rules new_rule_set;
-  
-  Printf.printf "Successfully generated and saved %d rules.\n%!" (List.length new_rules)
+  if generated_rules = [] then
+    Printf.printf "No new rules generated (fetch failed or no sources).\n%!"
+  else
+    let current_rules = match Rule_loader.load_rules () with Some rs -> rs.rules | None -> [] in
+    
+    (* Remove old generated rules to avoid duplication/stale data *)
+    let kept_rules = List.filter (fun (r : Rule_loader.rule_def) -> not (String.starts_with ~prefix:"Generated:" r.name)) current_rules in
+    
+    let new_rules = kept_rules @ generated_rules in
+    
+    let new_rule_set = { Rule_loader.version = "1.1"; rules = new_rules } in
+    Rule_loader.save_rules new_rule_set;
+    
+    Printf.printf "Successfully generated and saved %d rules.\n%!" (List.length new_rules)
