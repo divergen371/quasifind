@@ -120,12 +120,25 @@ module TUI = struct
     if String.length s <= len then s
     else String.sub s 0 (len - 3) ^ "..."
 
+  (* Shell-safe quoting for preview command argument *)
+  let shell_quote s =
+    let b = Buffer.create (String.length s + 10) in
+    Buffer.add_char b '\'';
+    String.iter (fun c ->
+      if c = '\'' then Buffer.add_string b "'\\''"
+      else Buffer.add_char b c
+    ) s;
+    Buffer.add_char b '\'';
+    Buffer.contents b
+
   (* Execute preview command and get output lines *)
   let get_preview preview_cmd selected_item =
     match preview_cmd with
     | None -> []
     | Some cmd_template ->
-        let cmd = Str.global_replace (Str.regexp_string "{}") selected_item cmd_template in
+        (* Quote the selected item for safe shell execution *)
+        let quoted_item = shell_quote selected_item in
+        let cmd = Str.global_replace (Str.regexp_string "{}") quoted_item cmd_template in
         try
           let ic = Unix.open_process_in cmd in
           let lines = ref [] in
