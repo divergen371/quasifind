@@ -1,5 +1,6 @@
 module Ast = Ast
-module Parser = Parser
+module Traversal = Traversal
+module Exec = Exec
 module Typed = Typed
 module Typecheck = Typecheck
 module Eval = Eval

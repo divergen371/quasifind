@@ -1,7 +1,7 @@
 (library
  (name quasifind)
  (public_name quasifind)
- (modules ast parser typecheck eval traversal)
+ (modules ast parser typecheck eval traversal exec)
  (libraries angstrom re eio eio_main)
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))

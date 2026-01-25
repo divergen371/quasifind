@@ -35,3 +35,4 @@
 - [x] Verify invalid syntax error reporting
 - [x] Verify help option (`-h` and no-args checks)
 - [x] Verify hidden file options (`--hidden` includes, default excludes)
+- [x] Verify command execution (`-x` per file, `-X` batch) with `{}` placeholder
