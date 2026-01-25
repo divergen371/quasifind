@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log help_short =
   if help_short then `Help (`Auto, None)
   else
   (* If --profile is specified, load profile and use its settings *)
@@ -18,7 +18,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log false
       )
   | None ->
       match expr_str_opt with
@@ -87,7 +87,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                   (* Watch mode: start monitoring if enabled *)
                   if watch_mode then (
                     let interval = match watch_interval with Some i -> float_of_int i | None -> 2.0 in
-                    Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast
+                    Watcher.watch_with_output ~interval ~root:root_dir ~cfg ~expr:typed_ast ?log_file:watch_log ()
                   );
                   
                   `Ok ()
@@ -206,9 +206,10 @@ let profile_name = Arg.(value & opt (some string) None & info ["profile"; "p"] ~
 let save_profile_name = Arg.(value & opt (some string) None & info ["save-profile"] ~docv:"NAME" ~doc:"Save current search options as a profile.")
 let watch_mode = Arg.(value & flag & info ["watch"; "w"] ~doc:"Watch mode: monitor filesystem for changes.")
 let watch_interval = Arg.(value & opt (some int) None & info ["interval"] ~docv:"SECONDS" ~doc:"Watch interval in seconds (default: 2).")
+let watch_log = Arg.(value & opt (some string) None & info ["log"] ~docv:"FILE" ~doc:"Log file for watch events.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"0.1.0"
 
