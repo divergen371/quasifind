@@ -4,21 +4,29 @@
 
 ## Changes
 
-| File                         | Description                                               |
-| ---------------------------- | --------------------------------------------------------- | --- | --- |
-| `lib/quasifind/ast.ml`       | Untyped/Typed AST definitions, supporting regex and units |
-| `lib/quasifind/parser.ml`    | Angstrom-based parser with operator precedence (`! > && > |     | `)  |
-| `lib/quasifind/typecheck.ml` | Validates untyped AST, compiles regex, normalizes units   |
-| `lib/quasifind/eval.ml`      | Pure evaluation logic for Typed AST vs File Entry         |
-| `test/test_quasifind.ml`     | Unit tests for all DSL components                         |
+| File                         | Description                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- | --- | --- |
+| `lib/quasifind/ast.ml`       | Untyped/Typed AST definitions, supporting regex and units                                               |
+| `lib/quasifind/parser.ml`    | Angstrom-based parser with operator precedence (`! > && >                                               |     | `)  |
+| `lib/quasifind/typecheck.ml` | Validates untyped AST, compiles regex, normalizes units                                                 |
+| `lib/quasifind/eval.ml`      | Pure evaluation logic for Typed AST vs File Entry                                                       |
+| `lib/quasifind/traversal.ml` | File system traversal engine. Supports DFS and Parallel (Eio) strategies. Includes Planner (Minimal A). |
+| `test/test_quasifind.ml`     | Unit tests for all DSL components                                                                       |
+| `test/test_traversal.ml`     | Integration tests for traversal engine (filesystem operations)                                          |
 
 ## Verification Results
 
 ### Automated Tests
 
-- [ ] Parser Tests
-- [ ] Eval Tests
+- [x] Parser Tests (Simple, Complex, Precedence)
+- [x] Typecheck Tests (Valid, Invalid)
+- [x] Eval Tests (Simple match)
+
+### Integration Tests
+
+- [x] Traversal DFS Test (Verify finding files in nested dirs)
+- [x] Traversal Parallel Test (Verify concurrent traversal works correctly)
 
 ### Manual Verification
 
-- [ ] Run against local directory
+- [ ] Run against local directory (Pending CLI implementation)

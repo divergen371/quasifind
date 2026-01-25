@@ -1,3 +1,7 @@
 (test
  (name test_quasifind)
  (libraries quasifind alcotest))
+
+(test
+ (name test_traversal)
+ (libraries quasifind alcotest eio eio_main))
