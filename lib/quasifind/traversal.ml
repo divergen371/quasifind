@@ -10,6 +10,7 @@ type config = {
   strategy : strategy;
   max_depth : int option;
   follow_symlinks : bool;
+  exclude_hidden : bool;
 }
 
 type plan = {
@@ -27,7 +28,7 @@ module Planner = struct
       (* Handle specific path equality or regex slightly carefully *)
       | Path (StrEq s) -> s (* Exact path match is a great start path *)
       | Path (StrRe re) -> "." (* Regex is hard to optimize statically without prefix analysis, for now fallback *)
-      (* Simple containment check for "starts with" could be done here if we had a dedicated Op, 
+      (* Simple containment check for "starts with" could be done here if we had a dedicated Op,
          but for now we look for exact matches or assume root *)
       | _ -> acc
     in
@@ -38,60 +39,44 @@ module Planner = struct
     { start_path = extract_start_path expr }
 end
 
-(* Helper to get stat and create entry *)
-let stat_entry path name kind =
-  try
-    let stats = Unix.lstat path in
-    let size = Int64.of_int stats.st_size in
-    let mtime = stats.st_mtime in
-    Some { Eval.name; path; kind; size; mtime }
-  with Unix.Unix_error (code, op, arg) ->
-    (* trace error? *)
-    None
+(* ... *)
 
 let rec visit (cfg : config) depth emit dir_path =
-  (* Check depth limit *)
   match cfg.max_depth with
   | Some max_d when depth >= max_d -> ()
   | _ ->
-    (* Read directory entries *)
     match Sys.readdir dir_path with
     | entries ->
       Array.iter (fun name ->
         if name <> "." && name <> ".." then
-          let full_path = Filename.concat dir_path name in
-          (* lstat to check kind *)
-          try
-             let stats = Unix.lstat full_path in
-             let kind = match stats.st_kind with
-               | Unix.S_REG -> File
-               | Unix.S_DIR -> Dir
-               | Unix.S_LNK -> Symlink
-               | _ -> File (* fallback or ignore? *)
-             in
-             
-             (* Create entry and emit *)
-             (* Note: mtime from stats is sufficient here, no need to call stat_entry again strictly
-                but let's reuse logic or keep it simple. *)
-             let size = Int64.of_int stats.st_size in
-             let entry = { Eval.name; path = full_path; kind; size; mtime = stats.st_mtime } in
-             emit entry;
+          (* Check exclude hidden *)
+          if cfg.exclude_hidden && String.starts_with ~prefix:"." name then ()
+          else
+            let full_path = Filename.concat dir_path name in
+            try
+               let stats = Unix.lstat full_path in
+               let kind = match stats.st_kind with
+                 | Unix.S_REG -> File
+                 | Unix.S_DIR -> Dir
+                 | Unix.S_LNK -> Symlink
+                 | _ -> File
+               in
+               
+               let size = Int64.of_int stats.st_size in
+               let entry = { Eval.name; path = full_path; kind; size; mtime = stats.st_mtime } in
+               emit entry;
 
-             (* Recurse if directory *)
-             if kind = Dir then
-               visit cfg (depth + 1) emit full_path
-             else if kind = Symlink && cfg.follow_symlinks then
-               (* TODO: loop detection *)
-               (* For now naive follow *)
-               match Unix.stat full_path with
-               | { st_kind = S_DIR; _ } -> visit cfg (depth + 1) emit full_path
-               | _ -> () (* It's a file symlink, already emitted *)
-               | exception _ -> () (* broken link *)
-          with _ -> () (* permission denied etc *)
+               if kind = Dir then
+                 visit cfg (depth + 1) emit full_path
+               else if kind = Symlink && cfg.follow_symlinks then
+                 match Unix.stat full_path with
+                 | { st_kind = S_DIR; _ } -> visit cfg (depth + 1) emit full_path
+                 | _ -> ()
+                 | exception _ -> ()
+            with _ -> ()
       ) entries
-    | exception _ -> () (* permission denied *)
+    | exception _ -> ()
 
-(* Parallel traversal using Eio *)
 let traverse_parallel ~concurrency (cfg : config) emit start_path =
   Eio.Switch.run @@ fun sw ->
   let sem = Eio.Semaphore.make concurrency in
@@ -106,26 +91,28 @@ let traverse_parallel ~concurrency (cfg : config) emit start_path =
         | entries ->
           Array.iter (fun name ->
             if name <> "." && name <> ".." then
-              let full_path = Filename.concat dir_path name in
-              try
-                 let stats = Unix.lstat full_path in
-                 let kind = match stats.st_kind with
-                   | Unix.S_REG -> File
-                   | Unix.S_DIR -> Dir
-                   | Unix.S_LNK -> Symlink
-                   | _ -> File
-                 in
-                 let entry = { Eval.name; path = full_path; kind; size = Int64.of_int stats.st_size; mtime = stats.st_mtime } in
-                 emit entry;
+              if cfg.exclude_hidden && String.starts_with ~prefix:"." name then ()
+              else
+                let full_path = Filename.concat dir_path name in
+                try
+                   let stats = Unix.lstat full_path in
+                   let kind = match stats.st_kind with
+                     | Unix.S_REG -> File
+                     | Unix.S_DIR -> Dir
+                     | Unix.S_LNK -> Symlink
+                     | _ -> File
+                   in
+                   let entry = { Eval.name; path = full_path; kind; size = Int64.of_int stats.st_size; mtime = stats.st_mtime } in
+                   emit entry;
 
-                 if kind = Dir then
-                   Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
-                 else if kind = Symlink && cfg.follow_symlinks then
-                   match Unix.stat full_path with
-                   | { st_kind = S_DIR; _ } -> Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
-                   | _ -> ()
-                   | exception _ -> ()
-              with _ -> ()
+                   if kind = Dir then
+                     Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
+                   else if kind = Symlink && cfg.follow_symlinks then
+                     match Unix.stat full_path with
+                     | { st_kind = S_DIR; _ } -> Fiber.fork ~sw (fun () -> visit_parallel (depth + 1) full_path)
+                     | _ -> ()
+                     | exception _ -> ()
+                with _ -> ()
           ) entries
         | exception _ -> ()
       )
