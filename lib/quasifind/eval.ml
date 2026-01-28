@@ -128,3 +128,12 @@ let rec eval ?(preserve_timestamps=false) (now : float) (expr : Typed.expr) (ent
   | MTime op -> check_time now op ent.mtime
   | Perm op -> check_perm op ent.perm
   | Entropy op -> check_entropy ent.path preserve_timestamps op
+
+(* Analyze expression to check if it depends on metadata (stat) *)
+let rec requires_metadata (expr : Typed.expr) : bool =
+  match expr with
+  | True | False -> false
+  | Not e -> requires_metadata e
+  | And (e1, e2) | Or (e1, e2) -> requires_metadata e1 || requires_metadata e2
+  | Name _ | Path _ | Content _ | Entropy _ | Type _ -> false (* Type is handled via Dirent.kind, Content/Entropy read file directly but don't strictly need stat for filtering if logic separates them *)
+  | Size _ | MTime _ | Perm _ -> true

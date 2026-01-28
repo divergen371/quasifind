@@ -50,6 +50,8 @@ hyperfine \
     --export-json "$RESULT_FILE" \
     --command-name "quasifind" \
         "$QUASIFIND $BASE_DIR 'name =~ /[0-9]\\.jpg\$/'" \
+    --command-name "quasifind (parallel)" \
+        "$QUASIFIND -j 8 $BASE_DIR 'name =~ /[0-9]\\.jpg\$/'" \
     --command-name "find" \
         "find $BASE_DIR -type f -name '*[0-9].jpg'" \
     --command-name "fd" \

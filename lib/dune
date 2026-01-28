@@ -20,7 +20,7 @@
   rule_loader
   rule_converter
   dirent)
- (libraries angstrom re eio eio_main yojson str)
+ (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)
   (names stealth_stubs dirent_stubs))

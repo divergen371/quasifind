@@ -43,7 +43,7 @@ let test_dfs () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -64,7 +64,7 @@ let test_parallel () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -85,27 +85,24 @@ let test_filtering () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
     (* Custom collect function with filtering enabled, mimicking main.ml *)
     let paths = ref [] in
+    let expr = Ast.Typed.(And (
+      Size (SizeGt 0L),
+      Name (StrEq "a.txt")
+    )) in
+
     let emit (entry : Eval.entry) =
-      (* Filter: size > 0 (both a.txt and b.txt have content) AND name == "a.txt" *)
-      let expr = Ast.Typed.(And (
-        Size (SizeGt 0L),
-        Name (StrEq "a.txt")
-      )) in
       if Eval.eval (Unix.gettimeofday ()) expr entry then
         paths := entry.path :: !paths
     in
-    (* We pass True to traverse, but filter in separate emit *)
-    (* Wait, traverse signature takes expr but doesn't apply it for output. *)
-    (* So we can test Eval logic integration here. *)
     
     Eio_main.run (fun _env ->
-        Traversal.traverse cfg root Ast.Typed.True emit
+        Traversal.traverse cfg root expr emit
     );
     
     let result = !paths in
@@ -132,7 +129,7 @@ let test_hidden_flag () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = false;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -148,7 +145,7 @@ let test_hidden_flag () =
       max_depth = None;
       follow_symlinks = false;
       include_hidden = true;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -311,7 +308,7 @@ let test_max_depth () =
       max_depth = Some 1; (* Should capture a.txt (depth 1), sub (depth 1). Should NOT capture b.txt (depth 2) *)
       follow_symlinks = false;
       include_hidden = false;
-      ignore = [];
+      ignore = []; ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -393,6 +390,7 @@ let test_combinations () =
       follow_symlinks = false;
       include_hidden = false;
       ignore = ["*ignore_me*"; "*.log"]; (* Test explicit ignore *)
+      ignore_re = [Re.Glob.glob "*ignore_me*" |> Re.compile; Re.Glob.glob "*.log" |> Re.compile];
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -414,7 +412,7 @@ let test_combinations () =
       max_depth = None;
       follow_symlinks = true;
       include_hidden = true;
-      ignore = []; (* No ignores *)
+      ignore = []; ignore_re = []; (* No ignores *)
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -457,7 +455,7 @@ let test_preserve_timestamps () =
     max_depth = None;
     follow_symlinks = false;
     include_hidden = false;
-    ignore = [];
+    ignore = []; ignore_re = [];
     preserve_timestamps = true;
     spawn = None;
   } in
@@ -483,7 +481,7 @@ let test_loop_termination () =
     max_depth = None; 
     follow_symlinks = true;
     include_hidden = false;
-    ignore = [];
+    ignore = []; ignore_re = [];
     preserve_timestamps = false;
     spawn = None;
   } in

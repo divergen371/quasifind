@@ -11,6 +11,7 @@
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/unixsupport.h>
+#include <caml/custom.h>
 
 /*
    We map d_type to a simple OCaml variant or int.
@@ -103,4 +104,122 @@ CAMLprim value caml_readdir_with_type(value v_path)
     closedir(d);
 
     CAMLreturn(v_entries);
+}
+
+/* --- Batch Readdir Implementation --- */
+
+/* Custom block for DIR* to handle finalization safely */
+static struct custom_operations dir_handle_ops = {
+    "quasifind.dir_handle",
+    custom_finalize_default,
+    custom_compare_default,
+    custom_hash_default,
+    custom_serialize_default,
+    custom_deserialize_default,
+    custom_compare_ext_default,
+    custom_fixed_length_default};
+
+/* Access hidden struct safely */
+#define Dir_val(v) (*((DIR **)Data_custom_val(v)))
+
+CAMLprim value caml_opendir(value v_path)
+{
+    CAMLparam1(v_path);
+    const char *path = String_val(v_path);
+
+    DIR *d = opendir(path);
+    if (d == NULL)
+    {
+        uerror("opendir", v_path);
+    }
+
+    value v_dir = caml_alloc_custom(&dir_handle_ops, sizeof(DIR *), 0, 1);
+    Dir_val(v_dir) = d;
+
+    CAMLreturn(v_dir);
+}
+
+CAMLprim value caml_closedir(value v_dir)
+{
+    CAMLparam1(v_dir);
+    DIR *d = Dir_val(v_dir);
+    if (d != NULL)
+    {
+        closedir(d);
+        Dir_val(v_dir) = NULL; /* Prevent double close */
+    }
+    CAMLreturn(Val_unit);
+}
+
+/*
+  caml_readdir_batch(dir_handle, buffer, offset, len)
+
+  Reads entries into buffer starting at offset, up to len bytes.
+  Format: [kind (1 byte)] [name_len (2 bytes, LE)] [name (name_len bytes)]
+
+  Returns: number of bytes written. 0 indicates End Of Directory.
+*/
+CAMLprim value caml_readdir_batch(value v_dir, value v_buf, value v_off, value v_len)
+{
+    CAMLparam4(v_dir, v_buf, v_off, v_len);
+
+    DIR *d = Dir_val(v_dir);
+    if (d == NULL)
+        caml_failwith("Directory already closed");
+
+    unsigned char *buf = Bytes_val(v_buf);
+    int offset = Int_val(v_off);
+    int capacity = Int_val(v_len);
+    int written = 0;
+
+    struct dirent *de;
+    errno = 0;
+
+    while (1)
+    {
+        /* Check if we have enough space for at least minimal entry (1+2+1=4 bytes) */
+        if (written + 4 > capacity)
+            break;
+
+        long loc = telldir(d); /* Save position to rewind if entry doesn't fit */
+        de = readdir(d);
+
+        if (de == NULL)
+            break; /* End of Dir or Error */
+
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+            continue;
+
+        int name_len = strlen(de->d_name);
+        int entry_size = 1 + 2 + name_len;
+
+        if (written + entry_size > capacity)
+        {
+            /* Not enough space for this entry. Rewind and return what we have. */
+            seekdir(d, loc);
+            break;
+        }
+
+        int kind = map_dtype(de->d_type);
+
+        /* Write [kind:1] */
+        buf[offset + written] = (unsigned char)kind;
+
+        /* Write [name_len:2] (Little Endian) */
+        buf[offset + written + 1] = (unsigned char)(name_len & 0xFF);
+        buf[offset + written + 2] = (unsigned char)((name_len >> 8) & 0xFF);
+
+        /* Write [name] */
+        memcpy(buf + offset + written + 3, de->d_name, name_len);
+
+        written += entry_size;
+    }
+
+    if (errno != 0 && written == 0)
+    {
+        /* Error occurred and we wrote nothing */
+        uerror("readdir", Val_unit); // Path unknown here, passed unit is vague but uerror expects value
+    }
+
+    CAMLreturn(Val_int(written));
 }

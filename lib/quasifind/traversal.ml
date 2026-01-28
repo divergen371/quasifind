@@ -1,4 +1,5 @@
 open Eio.Std
+open Saturn
 open Ast
 open Ast.Typed
 
@@ -12,6 +13,7 @@ type config = {
   follow_symlinks : bool;
   include_hidden : bool;
   ignore : string list;
+  ignore_re : Re.re list; (* Pre-compiled regexes *)
   preserve_timestamps : bool;
   spawn : ((unit -> unit) -> unit) option;
 }
@@ -19,6 +21,7 @@ type config = {
 type plan = {
   start_path : string;
   name_filter : (string -> bool) option;
+  needs_stat : bool;
 }
 
 module Planner = struct
@@ -54,127 +57,17 @@ module Planner = struct
 
   let plan expr =
     { start_path = extract_start_path expr;
-      name_filter = extract_name_filter expr }
+      name_filter = extract_name_filter expr;
+      needs_stat = Eval.requires_metadata expr }
 end
-
-(* Check if we should process this entry based on name filter.
-   NOTE: This is pre-stat filtering. We must be careful not to prune directories
-   that we need to traverse, unless we are sure.
-   Since strictly speaking we don't know it's a directory without stat or readdir type,
-   and readdir only gives d_type on some systems (not portable in pure OCaml Sys.readdir), 
-   we can't easily skip non-matching names if they might be directories we need to enter.
-   
-   However, we *can* apply the filter if it's a pure name match that *should* apply to everything including directories
-   (e.g. name == "foo"). But for "name =~ /.../", if the regex doesn't match directory names, we stop traversal!
-   
-   Fix: We should only apply filter to restrict *emission* or *processing*, but for traversal (visiting subdirs), 
-   we generally must descend unless we implement pruning logic (e.g. prune path).
-   
-   Actually, the current logic is in `visit` loop. 
-   If we filter out "dir_1" because it doesn't match "*.jpg", we typically skip entering it.
-   
-   Correct logic for 'name' filter is:
-   1. It applies to the entry itself (whether to yield it).
-   2. It does NOT necessarily apply to whether we traverse into it (unless it's a prune rule).
-   
-   Wait, `find . -name "*.jpg"` DOES descend into directories that don't match *.jpg.
-   So applying name filter at `readdir` stage to decide what to *inspect* is wrong if that inspection determines traversal.
-   
-   BUT, we want to avoid `stat`.
-   
-   If we can't distiguish Dir/File without stat, we CANNOT prune based on name filter unless we know the filter *also* excludes the directory we want to traverse (which is rare).
-   
-   So, the optimization "Pre-stat Filtering" is only safe if:
-   A) We have `d_type` (requires generic readdir with type, e.g. Eio or Unix.readdir + non-portable).
-   B) Or we blindly stat everything *except* what we know matches? No.
-   
-   Correction: we cannot simply filter `readdir` results by query name filter if that prevents recursion.
-   
-   However, we can separate "matching" from "traversing".
-   
-   If we filter here, we skip `make_entry`. `make_entry` triggers `stat`. 
-   If we skip `make_entry`, we don't get `kind`, so we don't know if it's a dir, so we don't recurse.
-   
-   So this optimization (filtering before stat) is implicitly broken for recursive search unless we use `d_type`.
-   
-   Let's check if we can use Eio or a better readdir that gives types.
-   Standard `Sys.readdir` returns `string array`. `Unix.readdir` returns string.
-   
-   If we cannot get d_type without stat, we MUST stat directories.
-   
-   Can we guess? No.
-   
-   Partial fix: If the name filter is a negation (e.g. name != ".git"), we can safely skip if we assume we don't want to traverse ignored stuff.
-   But for positive match (name == "*.jpg"), we cannot skip "subdir".
-   
-   So, we need a separate "Prune" filter vs "Match" filter? 
-   Or, we accept we can't optimize this without `d_type`.
-   
-   Wait, `Eio.Path.read_dir` returns names.
-   
-   Let's fallback to: always stat, OR (better) use `d_type` if available? 
-   OCaml stdlib doesn't expose `d_type` easily in a cross-platform way without libraries like `dirent` or `ctypes`.
-   
-   Alternative strategy:
-   - We are currently in `Traversal`.
-   - We must call `stat` to check for Directory.
-   - OPTIMIZATION: If we stat and it is a FILE, *then* we check name filter?
-     - `make_entry` does stat.
-     - `eval` checks name filter.
-     - Is `eval` efficient? `eval` checks all fields.
-   
-   If we move name check *inside* `make_entry`? 
-   Or checking name *before* `stat`?
-   
-   If `name` doesn't match filter:
-     - If it's a file -> we can ignore it (save stat? no, we need stat to know it is a file).
-     - If it's a dir -> we must traverse it (need stat to know it is a dir).
-     
-   Conclusion: Without `d_type`, we CANNOT save `stat` calls for entries that might be directories. 
-   
-   However, we *can* save `stat` if we enable the optimization ONLY when we are sure we don't need to traverse? 
-   No, we always search deeper.
-   
-   Wait, does `fd` use `getdents` / `readdir` with type? Yes. Rust's `std::fs::read_dir` or `walkdir` uses it.
-   
-   Does OCaml have this? OCaml 5.1/Eio? 
-   `Eio.Path.read_dir` returns `string list`.
-   
-   Let's look at `uv` (used by Eio_posix)? 
-   
-   If we can't avoid stat for everything, maybe we can avoid `eval` overhead? 
-   `eval` is fast. `stat` is the bottleneck.
-   
-   For now, to fix the BUG (0 files found), I must revert the aggressive filtering for "should_visit" unless I can distinguish directories.
-   
-   But wait! `should_visit` is called for *recursion* candidates too?
-   Yes, `visit` loops over `readdir_seq |> filter should_visit`.
-   
-   So if `should_visit "subdir" == false` (because "subdir" != "*.jpg"), we skip it.
-   
-   FIX: `should_visit` should ONLY filter if we are sure it's not a traversal target. 
-   The `Planner` extracts "name match". This matching is for *selecting* results, not for *pruning* search tree.
-   
-   We should NOT use `planner.name_filter` to filter `readdir` stream for traversal.
-   We should use it to filter *what we emit* or *what we fully stat*?
-   
-   If we don't know it's a directory, we have to stat it.
-   
-   So the optimization attempted (Pre-stat filtering) is invalid for recursive search without `d_type`.
-   
-   I will revert the usage of `planner.name_filter` in `should_visit`, effectively disabling that part of optimization, but keeping the Adaptive Scheduling.
-   
-   However, we can keep `should_visit` for `cfg.ignore` (which implies pruning).
-*)
 
 let should_visit (cfg : config) (planner : plan) (name : string) : bool =
   (* Base ignores (hidden, .git, etc) -> These are PRUNING rules *)
   if (not cfg.include_hidden) && String.starts_with ~prefix:"." name then false
   else
-    let is_ignored = List.exists (fun pattern ->
-        let re = Re.Glob.glob pattern |> Re.compile in
+    let is_ignored = List.exists (fun re ->
         Re.execp re name
-      ) cfg.ignore
+      ) cfg.ignore_re
     in
     not is_ignored
 
@@ -197,13 +90,12 @@ let with_timestamps_preserved path preserve f =
   else
     f ()
 
-(* Helper to read directory entries with type *)
-let readdir_typed dir_path preserve : (string * Dirent.kind) list =
+(* Helper to read directory entries with type using batch iterator *)
+let iter_typed dir_path preserve f =
   with_timestamps_preserved dir_path preserve (fun () ->
-    try Dirent.readdir dir_path
+    try Dirent.iter_batch dir_path f
     with Unix.Unix_error (e, _, _) ->
-        Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path (Unix.error_message e);
-        []
+        Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path (Unix.error_message e)
   )
 
 (* Optimization Logic: Returns TRUE if we can skip processing this entry *)
@@ -217,35 +109,45 @@ let can_skip_stat (planner : plan) (name : string) (kind : Dirent.kind) =
       | None -> false
 
 (* Create entry from path, returning Option for error handling *)
-let make_entry path : Eval.entry option =
-  match Unix.lstat path with
-  | stats ->
-      let kind = match stats.st_kind with
-        | Unix.S_REG -> File
-        | Unix.S_DIR -> Dir
-        | Unix.S_LNK -> Symlink
-        | _ -> File
-      in
-      let size = Int64.of_int stats.st_size in
-      let name = Filename.basename path in
-      Some { Eval.name; path; kind; size; mtime = stats.st_mtime; perm = stats.st_perm }
-  | exception Unix.Unix_error (err, _, _) ->
-      Printf.eprintf "[Warning] Cannot stat %s: %s\n%!" path (Unix.error_message err);
-      None
+let make_entry ?(needs_stat=true) path (kind_hint : Dirent.kind) : Eval.entry option =
+  (* If metadata is not needed and kind is known, skip lstat *)
+  if not needs_stat && kind_hint <> Dirent.Unknown then
+    let kind = match kind_hint with
+      | Dirent.Reg -> Ast.File
+      | Dirent.Dir -> Ast.Dir
+      | Dirent.Symlink -> Ast.Symlink
+      | _ -> Ast.File
+    in
+    let name = Filename.basename path in
+    (* Return dummy metadata. Queries relying on this must have set needs_stat=true *)
+    Some { Eval.name; path; kind; size = 0L; mtime = 0.0; perm = 0 }
+  else
+    match Unix.lstat path with
+    | stats ->
+        let kind = match stats.st_kind with
+          | Unix.S_REG -> Ast.File
+          | Unix.S_DIR -> Ast.Dir
+          | Unix.S_LNK -> Ast.Symlink
+          | _ -> Ast.File
+        in
+        let size = Int64.of_int stats.st_size in
+        let name = Filename.basename path in
+        Some { Eval.name; path; kind; size; mtime = stats.st_mtime; perm = stats.st_perm }
+    | exception Unix.Unix_error (err, _, _) ->
+        Printf.eprintf "[Warning] Cannot stat %s: %s\n%!" path (Unix.error_message err);
+        None
 
 let visit (cfg : config) (planner : plan) depth emit dir_path =
   let rec aux depth dir_path =
     match cfg.max_depth with
     | Some max_d when depth >= max_d -> ()
     | _ ->
-        let entries = readdir_typed dir_path cfg.preserve_timestamps in
-        entries
-        |> List.iter (fun (name, kind) ->
+        iter_typed dir_path cfg.preserve_timestamps (fun name kind ->
              if name <> "." && name <> ".." && should_visit cfg planner name then
                if can_skip_stat planner name kind then () (* OPTIMIZATION: Skip lstat *)
                else
                  let full_path = Filename.concat dir_path name in
-                 match make_entry full_path with
+                 match make_entry ~needs_stat:planner.needs_stat full_path kind with
                  | None -> ()
                  | Some entry ->
                      emit entry;
@@ -261,50 +163,49 @@ let visit (cfg : config) (planner : plan) depth emit dir_path =
   in
   aux depth dir_path
 
-(* Dynamic Work Pool Strategy *)
+(* Lock-free Work Stealing Pool *)
 module Work_pool = struct
+  module WSD = Saturn.Work_stealing_deque
+
   type t = {
-    queue : (string * int) Queue.t;
-    lock : Eio.Mutex.t;
-    cond : Eio.Condition.t;
-    mutable active_workers : int;
-    mutable total_workers : int;
-    mutable shutdown : bool;
+    queues : (string * int) WSD.t array;
+    concurrency : int;
+    active_count : int Atomic.t; (* Number of workers currently processing or looking for work *)
+    idle_count : int Atomic.t;   (* Number of workers purely idle (failed to steal) *)
+    shutdown : bool Atomic.t;
   }
 
-  let create () = {
-    queue = Queue.create ();
-    lock = Eio.Mutex.create ();
-    cond = Eio.Condition.create ();
-    active_workers = 0;
-    total_workers = 0;
-    shutdown = false;
-  }
+  let create ~concurrency =
+    let queues = Array.init concurrency (fun _ -> WSD.create ()) in
+    {
+      queues;
+      concurrency;
+      active_count = Atomic.make concurrency;
+      idle_count = Atomic.make 0;
+      shutdown = Atomic.make false;
+    }
 
-  let push t item =
-    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
-      Queue.push item t.queue;
-      Eio.Condition.broadcast t.cond
-    )
+  let push t id item =
+    WSD.push t.queues.(id) item
 
-  let pop_blocking t =
-    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
-      let rec loop () =
-        if not (Queue.is_empty t.queue) then
-          Some (Queue.pop t.queue)
-        else if t.shutdown then
-          None
-        else if t.active_workers = 0 then (
-          t.shutdown <- true;
-          Eio.Condition.broadcast t.cond;
-          None
-        ) else (
-          Eio.Condition.await t.cond t.lock;
-          loop ()
-        )
-      in
-      loop ()
-    )
+  let try_pop_local t id =
+    WSD.pop_opt t.queues.(id)
+
+  let try_steal t id =
+    let victim = Random.int t.concurrency in
+    if victim = id then None
+    else WSD.steal_opt t.queues.(victim)
+
+  (* Attempt experimental stealing approach: try multiple times valid victims *)
+  let rec attempt_steal t id attempt =
+    if attempt > 2 * t.concurrency then None
+    else
+      let victim = Random.int t.concurrency in
+      if victim = id then attempt_steal t id (attempt + 1)
+      else
+        match WSD.steal_opt t.queues.(victim) with
+        | Some _ as res -> res
+        | None -> attempt_steal t id (attempt + 1)
 end
 
 let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_path =
@@ -312,67 +213,82 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
   
   run_in_switch @@ fun sw ->
   
-  let pool = Work_pool.create () in
-  Work_pool.push pool (start_path, 0);
-  pool.total_workers <- concurrency;
+  let pool = Work_pool.create ~concurrency in
   
-  let rec worker_loop () =
-    match Work_pool.pop_blocking pool with
-    | None -> () (* Done *)
-    | Some (dir_path, depth) ->
-        (* Mark as active *)
-        Eio.Mutex.use_rw ~protect:true pool.lock (fun () -> pool.active_workers <- pool.active_workers + 1);
-        
-        (* Process directory *)
-        (try
-           let should_process = 
-             match cfg.max_depth with
-             | Some max_d -> depth < max_d 
-             | None -> true
-           in
+  (* Initial task to worker 0 *)
+  Work_pool.push pool 0 (start_path, 0);
 
-           if not should_process then ()
-           else
-             let entries = readdir_typed dir_path cfg.preserve_timestamps in
-             entries |> List.iter (fun (name, kind) ->
-               if name <> "." && name <> ".." && should_visit cfg planner name then
-                 if can_skip_stat planner name kind then ()
-                 else
-                   let full_path = Filename.concat dir_path name in
-                   match make_entry full_path with
-                   | None -> ()
-                   | Some entry ->
-                       emit entry;
-                       (* Recurse if directory and DEPTH+1 allows *)
-                       let should_recurse = 
-                         match cfg.max_depth with
-                         | Some max_d -> depth + 1 < max_d
-                         | None -> true
-                       in
-                       
-                       if should_recurse then
-                         match entry.kind with
-                         | Dir -> Work_pool.push pool (full_path, depth + 1)
-                         | Symlink when cfg.follow_symlinks ->
-                             (match Unix.stat full_path with
-                              | { st_kind = S_DIR; _ } -> Work_pool.push pool (full_path, depth + 1)
-                              | _ -> ()
-                              | exception _ -> ())
-                         | _ -> ()
-             )
-         with exn -> 
-           Printf.eprintf "Error processing %s: %s\n%!" dir_path (Printexc.to_string exn)
-        );
+  let rec worker_loop id =
+    (* 1. Try local pop *)
+    match Work_pool.try_pop_local pool id with
+    | Some task -> process_task id task
+    | None ->
+        (* 2. Try steal *)
+        match Work_pool.attempt_steal pool id 0 with
+        | Some task -> process_task id task
+        | None ->
+            (* 3. Idle / Termination Detection *)
+            Atomic.incr pool.idle_count;
+            
+            (* Check strictly: If all workers are idle, we are done. *)
+            while not (Atomic.get pool.shutdown) do
+               if Atomic.get pool.idle_count = pool.concurrency then (
+                 Atomic.set pool.shutdown true
+               ) else (
+                 (* Busy wait / Yield. In Eio, yield. *)
+                 Eio.Fiber.yield ();
+                 (* Retry steal periodically just in case *)
+                 match Work_pool.attempt_steal pool id 0 with
+                 | Some task -> 
+                     Atomic.decr pool.idle_count;
+                     process_task id task
+                     (* Break loop by recursion? No, process_task loops back. *)
+                 | None -> ()
+               )
+            done;
+            (* Shutdown check again to exit loop implies return unit *)
+            ()
 
-        (* Mark as inactive *)
-        Eio.Mutex.use_rw ~protect:true pool.lock (fun () -> 
-           pool.active_workers <- pool.active_workers - 1;
-           if pool.active_workers = 0 && Queue.is_empty pool.queue then (
-             pool.shutdown <- true;
-             Eio.Condition.broadcast pool.cond
-           )
-        );
-        worker_loop ()
+  and process_task id (dir_path, depth) =
+    (try
+       let should_process = 
+         match cfg.max_depth with
+         | Some max_d -> depth < max_d 
+         | None -> true
+       in
+
+
+       if should_process then
+         iter_typed dir_path cfg.preserve_timestamps (fun name kind ->
+           if name <> "." && name <> ".." && should_visit cfg planner name then
+             if can_skip_stat planner name kind then ()
+             else
+               let full_path = Filename.concat dir_path name in
+               match make_entry ~needs_stat:planner.needs_stat full_path kind with
+               | None -> ()
+               | Some entry ->
+                   emit entry;
+                   let should_recurse = 
+                     match cfg.max_depth with
+                     | Some max_d -> depth + 1 < max_d
+                     | None -> true
+                   in
+                   
+                   if should_recurse then
+                     match entry.kind with
+                     | Dir -> Work_pool.push pool id (full_path, depth + 1)
+                     | Symlink when cfg.follow_symlinks ->
+                         (match Unix.stat full_path with
+                          | { st_kind = S_DIR; _ } -> Work_pool.push pool id (full_path, depth + 1)
+                          | _ -> ()
+                          | exception _ -> ())
+                     | _ -> ()
+         )
+     with exn -> 
+       Printf.eprintf "Error processing %s: %s\n%!" dir_path (Printexc.to_string exn)
+    );
+    (* Continue loop *)
+    worker_loop id
   in
 
   (* Spawn domains *)
@@ -381,13 +297,13 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
        Fiber.fork ~sw (fun () ->
          match cfg.spawn with
          | Some spawn_fn -> spawn_fn (fun () -> 
-             Eio.Switch.run @@ fun _sw -> worker_loop ()
+             Eio.Switch.run @@ fun _sw -> worker_loop i
          )
-         | None -> worker_loop ()
+         | None -> worker_loop i
        )
     done;
-    (* Run one worker on current domain *)
-    worker_loop ()
+    (* Run worker 0 on current domain *)
+    worker_loop 0
   in
   
   spawn_workers ()
@@ -399,11 +315,6 @@ let traverse (cfg : config) (root_path : string) (expr : Typed.expr) (emit : Eva
     if p.start_path = "." then root_path
     else Filename.concat root_path p.start_path
   in
-  
-  (* TODO: Emit root path itself if it matches filter? 
-     find generally emits the start path. quasifind's visit logic starts "inside".
-     We can fix this disjoint later if strictly required, but usually find implies searching IN path.
-  *)
   
   match cfg.strategy with
   | DFS -> visit cfg p 0 emit effective_start_path

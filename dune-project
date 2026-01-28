@@ -32,7 +32,8 @@
   cmdliner
   yojson
   qcheck
-  qcheck-alcotest)
+  qcheck-alcotest
+  saturn)
  (tags
   ("add topics" "to describe" your project)))
 

@@ -52,8 +52,9 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
         let concurrency = match jobs with | None -> 1 | Some n -> n in
         let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
         let ignore_patterns = config.ignore @ exclude in
+        let ignore_re = List.map (fun p -> Re.Glob.glob p |> Re.compile) ignore_patterns in
         
-        let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; preserve_timestamps = stealth_mode; spawn = Some spawn_fn } in
+        let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; ignore_re; preserve_timestamps = stealth_mode; spawn = Some spawn_fn } in
         
         let batch_paths = ref [] in
         let all_found_paths = ref [] in
