@@ -49,3 +49,4 @@ compile_commands.json
 
 # Benchmarks
 bench/results/
+etc/

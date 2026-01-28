@@ -264,7 +264,7 @@ let visit (cfg : config) (planner : plan) depth emit dir_path =
 (* Dynamic Work Pool Strategy *)
 module Work_pool = struct
   type t = {
-    queue : string Queue.t;
+    queue : (string * int) Queue.t;
     lock : Eio.Mutex.t;
     cond : Eio.Condition.t;
     mutable active_workers : int;
@@ -287,34 +287,6 @@ module Work_pool = struct
       Eio.Condition.broadcast t.cond
     )
 
-  (* Try to pop an item. If empty, wait until item available or termination. *)
-  let rec pop t =
-    Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
-      if not (Queue.is_empty t.queue) then
-        Some (Queue.pop t.queue)
-      else if t.shutdown then
-        None
-      else if t.active_workers = 0 then (
-        (* No active workers and queue empty -> Termination *)
-        t.shutdown <- true;
-        Eio.Condition.broadcast t.cond;
-        None
-      ) else (
-        (* Wait for work *)
-        Eio.Condition.await t.cond t.lock;
-        (* Retry after wake up *)
-        (* Note: The recursive call here is inside the lock, but Eio.Mutex allows it? 
-           NO. await releases lock. Recursive call needs to re-acquire.
-           Actually, simply returning a special value to retry is safer, or constructing loop outside.
-           Let's return `Retry` or `Done`. *)
-        (* Better: loop inside the lock? No, await releases lock. *)
-        (* Eio.Condition.await releases lock and re-acquires.
-           So we CAN loop here. *)
-        None (* Placeholder, will be retried by caller wrapper if needed, but let's do it properly *)
-      )
-    )
-    
-  (* Correct Pop implementation with loop *)
   let pop_blocking t =
     Eio.Mutex.use_rw ~protect:true t.lock (fun () ->
       let rec loop () =
@@ -341,37 +313,53 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
   run_in_switch @@ fun sw ->
   
   let pool = Work_pool.create () in
-  Work_pool.push pool start_path;
+  Work_pool.push pool (start_path, 0);
   pool.total_workers <- concurrency;
   
   let rec worker_loop () =
     match Work_pool.pop_blocking pool with
     | None -> () (* Done *)
-    | Some dir_path ->
+    | Some (dir_path, depth) ->
         (* Mark as active *)
         Eio.Mutex.use_rw ~protect:true pool.lock (fun () -> pool.active_workers <- pool.active_workers + 1);
         
         (* Process directory *)
         (try
-           let entries = readdir_typed dir_path cfg.preserve_timestamps in
-           entries |> List.iter (fun (name, kind) ->
-             if name <> "." && name <> ".." && should_visit cfg planner name then
-               if can_skip_stat planner name kind then ()
-               else
-                 let full_path = Filename.concat dir_path name in
-                 match make_entry full_path with
-                 | None -> ()
-                 | Some entry ->
-                     emit entry;
-                     match entry.kind with
-                     | Dir -> Work_pool.push pool full_path
-                     | Symlink when cfg.follow_symlinks ->
-                         (match Unix.stat full_path with
-                          | { st_kind = S_DIR; _ } -> Work_pool.push pool full_path
-                          | _ -> ()
-                          | exception _ -> ())
-                     | _ -> ()
-           )
+           let should_process = 
+             match cfg.max_depth with
+             | Some max_d -> depth < max_d 
+             | None -> true
+           in
+
+           if not should_process then ()
+           else
+             let entries = readdir_typed dir_path cfg.preserve_timestamps in
+             entries |> List.iter (fun (name, kind) ->
+               if name <> "." && name <> ".." && should_visit cfg planner name then
+                 if can_skip_stat planner name kind then ()
+                 else
+                   let full_path = Filename.concat dir_path name in
+                   match make_entry full_path with
+                   | None -> ()
+                   | Some entry ->
+                       emit entry;
+                       (* Recurse if directory and DEPTH+1 allows *)
+                       let should_recurse = 
+                         match cfg.max_depth with
+                         | Some max_d -> depth + 1 < max_d
+                         | None -> true
+                       in
+                       
+                       if should_recurse then
+                         match entry.kind with
+                         | Dir -> Work_pool.push pool (full_path, depth + 1)
+                         | Symlink when cfg.follow_symlinks ->
+                             (match Unix.stat full_path with
+                              | { st_kind = S_DIR; _ } -> Work_pool.push pool (full_path, depth + 1)
+                              | _ -> ()
+                              | exception _ -> ())
+                         | _ -> ()
+             )
          with exn -> 
            Printf.eprintf "Error processing %s: %s\n%!" dir_path (Printexc.to_string exn)
         );
@@ -388,29 +376,11 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
   in
 
   (* Spawn domains *)
-  (* Using Atomic for domain counting not strictly needed since pool tracks it, but Eio needs forks *)
-  
-  (* We spawn (concurrency - 1) domains + 1 fiber on current domain *)
   let spawn_workers () =
     for i = 1 to concurrency - 1 do
        Fiber.fork ~sw (fun () ->
          match cfg.spawn with
          | Some spawn_fn -> spawn_fn (fun () -> 
-             (* Need a Switch in new domain? Parallel strategy usually implies independent switches 
-                or just running pure code. Readdir is blocking syscall. *)
-             (* Eio functions inside spawn_fn might need switch? 
-                Work_pool uses Eio.Mutex. *)
-             (* CRITICAL: Eio.Mutex and Condition must be used within Eio. 
-                If spawn_fn uses `Eio.Domain_manager.run`, it creates a new domain. 
-                Eio primitives are thread-safe across domains IF specific backends support it.
-                Eio_posix usually supports sharing via domains. *)
-             
-             (* However, `Eio.Domain_manager.run` expects the function to just run. 
-                If we use Eio mutex inside, we need an Eio environment? 
-                Actually, `spawn_fn` provided by `main.ml` uses `Eio.Domain_manager.run env`. 
-                This runs the function in a new domain.
-                Does that domain have a Switch? `run` does NOT create a switch. 
-                So we should create one. *)
              Eio.Switch.run @@ fun _sw -> worker_loop ()
          )
          | None -> worker_loop ()
@@ -429,6 +399,11 @@ let traverse (cfg : config) (root_path : string) (expr : Typed.expr) (emit : Eva
     if p.start_path = "." then root_path
     else Filename.concat root_path p.start_path
   in
+  
+  (* TODO: Emit root path itself if it matches filter? 
+     find generally emits the start path. quasifind's visit logic starts "inside".
+     We can fix this disjoint later if strictly required, but usually find implies searching IN path.
+  *)
   
   match cfg.strategy with
   | DFS -> visit cfg p 0 emit effective_start_path

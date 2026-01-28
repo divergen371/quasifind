@@ -1,1 +1,0 @@
-/Users/atsushi/.opam/5.4.0/bin/quasifind . 'size > 1KB' -j 4 -d 4 -x 'ls -l {}'
