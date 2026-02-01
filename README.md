@@ -332,6 +332,66 @@ dune runtest
 
 **注**: **スモークテスト** はシステム依存の関数（`is_available`, `is_atty`, 通知関数など）に対して、クラッシュしないことのみを確認するテストです。実際の戻り値や副作用は検証していません。
 
+## Appendix: ビルド・インストールガイド
+
+### 必要要件 (Prerequisites)
+
+- **OCaml**: 5.0.0 以上 (5.2.0 推奨)
+- **Opam**: OCaml パッケージマネージャ
+- **Dune**: ビルドシステム
+
+### OS別セットアップ手順
+
+#### macOS
+
+Homebrew を使用してインストールします。
+
+```bash
+# 1. Opamのインストール
+brew install opam
+
+# 2. Opamの初期化
+opam init -y --shell=zsh
+eval $(opam env)
+
+# 3. OCaml 5.x 環境の作成 (既に最新が入っている場合はスキップ可)
+opam switch create 5.2.0
+eval $(opam env)
+
+# 4. 依存パッケージのインストールとビルド
+opam install . --deps-only --with-test -y
+dune build
+```
+
+#### Linux (Ubuntu/Debian)
+
+```bash
+# 1. 必要なツールのインストール
+sudo apt update
+sudo apt install -y opam build-essential bubblewrap unzip
+
+# 2. Opamの初期化
+opam init -y --disable-sandboxing
+eval $(opam env)
+
+# 3. OCaml 5.x 環境の作成
+opam switch create 5.2.0
+eval $(opam env)
+
+# 4. 依存パッケージのインストールとビルド
+opam install . --deps-only --with-test -y
+dune build
+```
+
+#### Windows
+
+Quasifind は Unix 系のシステムコール (`mmap`, `dirent` の `d_type`, `lstat` など) に依存しているため、**WSL2 (Windows Subsystem for Linux)** 上での実行を強く推奨します。
+
+1.  **WSL2 のインストール**: PowerShell (管理者) で `wsl --install` を実行し、Ubuntu をセットアップします。
+2.  **Ubuntu 上でのセットアップ**: 上記の「Linux (Ubuntu/Debian)」の手順に従ってください。
+
+※ 純粋な Windows 環境 (MinGW/MSVC) でのビルドは現在サポートしていません。
+
 ## ライセンス
 
 MIT License
