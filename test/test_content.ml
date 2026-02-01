@@ -12,7 +12,7 @@ let test_content_match () =
   let temp_file = Filename.temp_file "test_content" ".txt" in
   setup_file temp_file "secret_password_123";
   
-  let expr = Content (StrRe (Re.compile (Re.Pcre.re "password"))) in
+  let expr = Content (StrRe ("password", Re.compile (Re.Pcre.re "password"))) in
   let entry = {
     Eval.name = Filename.basename temp_file;
     path = temp_file;
@@ -24,7 +24,7 @@ let test_content_match () =
   
   check bool "matches content" true (Eval.eval 0.0 expr entry);
   
-  let expr_fail = Content (StrRe (Re.compile (Re.Pcre.re "missing"))) in
+  let expr_fail = Content (StrRe ("missing", Re.compile (Re.Pcre.re "missing"))) in
   check bool "no match" false (Eval.eval 0.0 expr_fail entry);
   
   Sys.remove temp_file

@@ -16,7 +16,7 @@ let check_string op s =
   match op with
   | StrEq target -> String.equal s target
   | StrNe target -> not (String.equal s target)
-  | StrRe re -> Re.execp re s
+  | StrRe (_, re) -> Re.execp re s
 
 (* Helper to read file content with optional timestamp preservation *)
 let read_file_content path preserve =
@@ -42,9 +42,23 @@ let read_file_content path preserve =
     read ()
 
 let check_content path preserve op =
-  match read_file_content path preserve with
-  | Some content -> check_string op content
-  | None -> false
+  (* Fast path: Try mmap+regex if possible *)
+  match op with
+  | StrRe (pattern, re) ->
+      (match Search.regex path pattern with
+       | Search.Match -> true
+       | Search.NoMatch -> false
+       | Search.Fallback -> 
+           (* Fallback to slow path *)
+           (match read_file_content path preserve with
+            | Some content -> Re.execp re content
+            | None -> false))
+  | _ ->
+      (* For non-regex (string) ops, we could also optimize with memmem later.
+         For now, use read_file_content. *)
+      match read_file_content path preserve with
+      | Some content -> check_string op content
+      | None -> false
 
 let calculate_entropy content =
   let len = String.length content in

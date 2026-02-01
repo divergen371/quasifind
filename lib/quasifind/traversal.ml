@@ -50,7 +50,7 @@ module Planner = struct
            | _ -> None) (* Conservative: if one side unfilterable, can't filter *)
       | Name (StrEq s) -> Some (String.equal s)
       | Name (StrNe s) -> Some (fun n -> not (String.equal s n))
-      | Name (StrRe re) -> Some (Re.execp re)
+      | Name (StrRe (_, re)) -> Some (Re.execp re)
       | _ -> None
     in
     aux expr

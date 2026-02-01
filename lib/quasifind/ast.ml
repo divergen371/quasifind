@@ -57,7 +57,7 @@ module Typed = struct
   and string_cmp = 
     | StrEq of string
     | StrNe of string
-    | StrRe of Re.re (* Compiled regex *)
+    | StrRe of string * Re.re (* Original pattern and Compiled regex *)
 
   and type_cmp =
     | TypeEq of file_type

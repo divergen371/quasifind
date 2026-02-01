@@ -12,6 +12,12 @@ let ( >>= ) = Result.bind
 
 exception TypeError of error
 
+let re_source = function
+  | VRegex s -> s
+  | VString s -> s
+  | _ -> ""
+
+
 let pp_error ppf = function
   | UnknownField f -> Format.fprintf ppf "Unknown field: %s" f
   | TypeMismatch { field; expected; got } ->
@@ -114,21 +120,21 @@ and check_name op value =
   match op with
   | Eq -> check_value_string "name" value |> Result.map (fun s -> Name (StrEq s))
   | Ne -> check_value_string "name" value |> Result.map (fun s -> Name (StrNe s))
-  | RegexMatch -> check_value_regex "name" value |> Result.map (fun re -> Name (StrRe re))
+  | RegexMatch -> check_value_regex "name" value |> Result.map (fun re -> Name (StrRe (re_source value, re)))
   | _ -> Error (InvalidOp { field = "name"; op; reason = "only ==, !=, =~ supported" })
 
 and check_path op value =
   match op with
   | Eq -> check_value_string "path" value |> Result.map (fun s -> Path (StrEq s))
   | Ne -> check_value_string "path" value |> Result.map (fun s -> Path (StrNe s))
-  | RegexMatch -> check_value_regex "path" value |> Result.map (fun re -> Path (StrRe re))
+  | RegexMatch -> check_value_regex "path" value |> Result.map (fun re -> Path (StrRe (re_source value, re)))
   | _ -> Error (InvalidOp { field = "path"; op; reason = "only ==, !=, =~ supported" })
 
 and check_content op value =
   match op with
   | Eq -> check_value_string "content" value |> Result.map (fun s -> Content (StrEq s))
   | Ne -> check_value_string "content" value |> Result.map (fun s -> Content (StrNe s))
-  | RegexMatch -> check_value_regex "content" value |> Result.map (fun re -> Content (StrRe re))
+  | RegexMatch -> check_value_regex "content" value |> Result.map (fun re -> Content (StrRe (re_source value, re)))
   | _ -> Error (InvalidOp { field = "content"; op; reason = "only ==, !=, =~ supported" })
 
 and check_type op value =
