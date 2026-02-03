@@ -18,6 +18,22 @@ let check_string op s =
   | StrNe target -> not (String.equal s target)
   | StrRe (_, re) -> Re.execp re s
 
+(* Helper to wrap operations with timestamp preservation *)
+let with_timestamp_preservation path preserve f =
+  if preserve then
+    match Unix.lstat path with
+    | stats ->
+        let atime = stats.st_atime in
+        let mtime = stats.st_mtime in
+        let res = f () in
+        (try 
+           Unix.utimes path atime mtime;
+         with _ -> ());
+        res
+    | exception _ -> f ()
+  else
+    f ()
+
 (* Helper to read file content with optional timestamp preservation *)
 let read_file_content path preserve =
   let read () =
@@ -29,30 +45,22 @@ let read_file_content path preserve =
       Some buf
     with _ -> None
   in
-  if preserve then
-    match Unix.lstat path with
-    | stats ->
-        let atime = stats.st_atime in
-        let mtime = stats.st_mtime in
-        let res = read () in
-        (try Unix.utimes path atime mtime with _ -> ());
-        res
-    | exception _ -> read ()
-  else
-    read ()
+  with_timestamp_preservation path preserve read
 
 let check_content path preserve op =
   (* Fast path: Try mmap+regex if possible *)
   match op with
   | StrRe (pattern, re) ->
-      (match Search.regex path pattern with
-       | Search.Match -> true
-       | Search.NoMatch -> false
-       | Search.Fallback -> 
-           (* Fallback to slow path *)
-           (match read_file_content path preserve with
-            | Some content -> Re.execp re content
-            | None -> false))
+      with_timestamp_preservation path preserve (fun () ->
+        match Search.regex path pattern with
+        | Search.Match -> true
+        | Search.NoMatch -> false
+        | Search.Fallback -> 
+            (* Fallback to slow path *)
+            (match read_file_content path false with (* timestamps already handled by wrapper *)
+             | Some content -> Re.execp re content
+             | None -> false)
+      )
   | _ ->
       (* For non-regex (string) ops, we could also optimize with memmem later.
          For now, use read_file_content. *)

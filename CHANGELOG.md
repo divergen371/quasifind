@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-02-03
+
+### Fixes
+
+- **Stealth Mode**: Improved process hiding on macOS by properly overwriting `argv[0]` and clearing subsequent arguments.
+- **Timestamp Wiping**: Fixed `atime` restoration logic to ensure file access timestamps are preserved even when using the optimized mmap search path.
+- **Watcher Notification**: Fixed an issue where the watcher would not report file modifications in the CLI due to missing metadata key optimization.
+
 ## [1.0.0] - 2026-02-01
 
 First major release of Quasifind!

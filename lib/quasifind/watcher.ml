@@ -28,9 +28,20 @@ let scan_files config =
   let files = ref StringMap.empty in
   let now = Unix.gettimeofday () in
   Traversal.traverse config.traversal_config config.root config.expr (fun entry ->
-    if Eval.eval ~preserve_timestamps:config.traversal_config.preserve_timestamps now config.expr entry then
-      files := StringMap.add entry.path { path = entry.path; mtime = entry.mtime; perm = entry.perm } !files
+    (* Check if mtime is absent (0.0) due to Traversal optimization.
+       If so, we must stat it now to track changes properly. *)
+    let entry_with_meta = 
+       if entry.mtime = 0.0 then 
+         match Unix.lstat entry.path with
+         | s -> { entry with mtime = s.st_mtime; perm = s.st_perm; size = Int64.of_int s.st_size } 
+         | exception _ -> entry (* If stat fails, rely on dummy (likely error or transient) *)
+       else entry
+    in
+
+    if Eval.eval ~preserve_timestamps:config.traversal_config.preserve_timestamps now config.expr entry_with_meta then
+      files := StringMap.add entry_with_meta.path { path = entry_with_meta.path; mtime = entry_with_meta.mtime; perm = entry_with_meta.perm } !files
   );
+  (* Printf.eprintf "[DEBUG] Scan complete. Found %d files.\n%!" (StringMap.cardinal !files); *)
   !files
 
 (* Log event to file if log_channel is provided *)
