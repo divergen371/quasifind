@@ -98,16 +98,39 @@ CAMLprim value caml_set_process_name(value v_name)
         }
 
         size_t total_len = end - start;
+
+        /* Adaptive name selection: avoid ugly truncation */
+        const char *best_name = name;
+        size_t name_len = strlen(name);
+
+        if (name_len > total_len)
+        {
+            if (total_len >= 9)
+            {
+                best_name = "[kworker]";
+            }
+            else if (total_len >= 7)
+            {
+                best_name = "kworker";
+            }
+            /* else keep original and let it truncate */
+            name_len = strlen(best_name);
+        }
+
         memset(start, 0, total_len);
 
-        size_t copy_len = new_len < total_len ? new_len : total_len;
-        memcpy(start, name, copy_len);
+        size_t copy_len = name_len < total_len ? name_len : total_len;
+        memcpy(start, best_name, copy_len);
 
         /* Clear remaining args if disjoint?
            The contiguous logic handles the main block.
            We should loop remaining args and clear them too if they are disjoint. */
         for (int i = 1; i < global_argc; i++)
         {
+            if (global_argv[i] > start && global_argv[i] < start + total_len)
+            {
+                continue; /* Inside contiguous block, already wiped */
+            }
             memset(global_argv[i], 0, strlen(global_argv[i]));
         }
     }
