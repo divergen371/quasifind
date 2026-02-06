@@ -98,7 +98,33 @@ let send_slack ?slack_url event_type path =
         json url in
       ignore (Unix.system cmd)
 
-let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url () =
+(* Send heartbeat signal *)
+let send_heartbeat url =
+  let timestamp = 
+    let t = Unix.localtime (Unix.gettimeofday ()) in
+    Printf.sprintf "%04d-%02d-%02dT%02d:%02d:%02d"
+      (t.tm_year + 1900) (t.tm_mon + 1) t.tm_mday t.tm_hour t.tm_min t.tm_sec
+  in
+  let pid = Unix.getpid () in
+  let hostname = try Unix.gethostname () with _ -> "unknown" in
+  let json = Printf.sprintf {|{"type":"heartbeat","hostname":"%s","pid":%d,"timestamp":"%s"}|}
+    hostname pid timestamp in
+  let cmd = Printf.sprintf "curl -s -X POST -H 'Content-Type: application/json' -d '%s' '%s' > /dev/null 2>&1" 
+    json url in
+  
+  match Unix.system cmd with
+  | Unix.WEXITED 0 -> ()
+  | _ -> Printf.eprintf "[Watch] Warning: Heartbeat failed\n%!"
+
+let get_file_hash path =
+  if not (Sys.file_exists path) then "" else
+  let cmd = Printf.sprintf "shasum -a 256 '%s' 2>/dev/null | awk '{print $1}'" path in
+  let ic = Unix.open_process_in cmd in
+  let hash = try input_line ic with End_of_file -> "" in
+  ignore (Unix.close_process_in ic);
+  hash
+
+let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) () =
   Printf.eprintf "[Watch] Monitoring %s (interval: %.1fs, Ctrl+C to stop)\n%!" root interval;
   
   (* Open log file if specified *)
@@ -112,55 +138,133 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
   (match webhook_url with Some url -> Printf.eprintf "[Watch] Webhook: %s\n%!" url | None -> ());
   (match email_addr with Some addr -> Printf.eprintf "[Watch] Email: %s\n%!" addr | None -> ());
   (match slack_url with Some _ -> Printf.eprintf "[Watch] Slack enabled\n%!" | None -> ());
+  (match heartbeat_url with Some url -> Printf.eprintf "[Watch] Heartbeat: %s (every %ds)\n%!" url heartbeat_interval | None -> ());
   
+  (* Identify config files to watch for integrity *)
+  let config_dir = Config.get_config_dir () in
+  let config_file = Filename.concat config_dir "config.json" in
+  let rules_file = Filename.concat config_dir "rules.json" in
+  let watched_configs = [config_file; rules_file] in
+  
+  (* Initial hashes *)
+  let config_hashes = Hashtbl.create 2 in
+  List.iter (fun path -> 
+    let h = get_file_hash path in
+    if h <> "" then Hashtbl.add config_hashes path h
+  ) watched_configs;
+  Printf.eprintf "[Watch] Integrity check enabled for config files\n%!";
+
   let config = { interval; root; traversal_config = cfg; expr } in
   let state = ref (scan_files config) in
   
   Printf.eprintf "[Watch] Initial scan: %d files matching\n%!" (StringMap.cardinal !state);
   
+  (* Main loop with Eio to support concurrent heartbeat *)
   try
-    while true do
-      Unix.sleepf interval;
-      let new_state = scan_files config in
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
       
-      (* Detect new and modified files *)
-      StringMap.iter (fun path file ->
-        match StringMap.find_opt path !state with
-        | None ->
-            on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
-            log_event ?log_channel New path;
-            send_webhook ?webhook_url New path;
-            send_email ?email_addr New path;
-            send_slack ?slack_url New path
-        | Some old_file ->
-            if file.mtime > old_file.mtime then begin
-              on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
-              log_event ?log_channel Modified path;
-              send_webhook ?webhook_url Modified path;
-              send_email ?email_addr Modified path;
-              send_slack ?slack_url Modified path
+      (* Fiber 1: Heartbeat (if enabled) *)
+      (match heartbeat_url with
+      | Some url ->
+          Eio.Fiber.fork ~sw (fun () ->
+            while true do
+              send_heartbeat url;
+              Eio.Time.sleep env#clock (float_of_int heartbeat_interval)
+            done
+          )
+      | None -> ());
+
+      (* Fiber 2: Integrity Check *)
+      Eio.Fiber.fork ~sw (fun () ->
+        while true do
+          Eio.Time.sleep env#clock (interval *. 5.0); (* Check less frequently than main scan *)
+          List.iter (fun path ->
+            let current_hash = get_file_hash path in
+            match Hashtbl.find_opt config_hashes path with
+            | Some old_hash ->
+                if current_hash <> old_hash && current_hash <> "" then begin
+                  Printf.eprintf "\n[CRITICAL] INTEGRITY ALERT: %s has been modified!\n%!" path;
+                  
+                  (* Send alerts explicitly for integrity violation *)
+                  let msg = Printf.sprintf "CRITICAL: Configuration file %s was modified! Old: %s, New: %s" 
+                    path (String.sub old_hash 0 8) (String.sub current_hash 0 8) in
+                  
+                  (* Using the existing notification channels but with customized message if possible, 
+                     or just reusing Modified event but logging special message *)
+                  log_event ?log_channel Modified path;
+                  
+                  (* Special webhook payload for integrity *)
+                  (match webhook_url with
+                  | Some url -> 
+                      let json = Printf.sprintf {|{"event":"INTEGRITY_VIOLATION","path":"%s","message":"%s"}|} path msg in
+                      let cmd = Printf.sprintf "curl -s -X POST -H 'Content-Type: application/json' -d '%s' '%s' > /dev/null 2>&1 &" json url in
+                      ignore (Unix.system cmd)
+                  | None -> ());
+                  
+                  (match slack_url with
+                  | Some url ->
+                      let json = Printf.sprintf {|{"text":":rotating_light: *INTEGRITY ALERT* %s"}|} msg in
+                      let cmd = Printf.sprintf "curl -s -X POST -H 'Content-Type: application/json' -d '%s' '%s' > /dev/null 2>&1 &" json url in
+                      ignore (Unix.system cmd)
+                  | None -> ());
+
+                  (* Update hash to avoid spamming alerts? 
+                     Better to spam until fixed or acked, but for now let's update to alert once per change *)
+                  Hashtbl.replace config_hashes path current_hash
+                end
+            | None ->
+                (* New config file appeared? *)
+                if current_hash <> "" then Hashtbl.add config_hashes path current_hash
+          ) watched_configs
+        done
+      );
+
+      (* Fiber 3: File Scanning *)
+      Eio.Fiber.fork ~sw (fun () ->
+        while true do
+          Eio.Time.sleep env#clock interval;
+          let new_state = scan_files config in
+          
+          (* Detect new and modified files *)
+          StringMap.iter (fun path file ->
+            match StringMap.find_opt path !state with
+            | None ->
+                on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
+                log_event ?log_channel New path;
+                send_webhook ?webhook_url New path;
+                send_email ?email_addr New path;
+                send_slack ?slack_url New path
+            | Some old_file ->
+                if file.mtime > old_file.mtime then begin
+                  on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
+                  log_event ?log_channel Modified path;
+                  send_webhook ?webhook_url Modified path;
+                  send_email ?email_addr Modified path;
+                  send_slack ?slack_url Modified path
+                end
+          ) new_state;
+          
+          (* Detect deleted files *)
+          StringMap.iter (fun path _ ->
+            if not (StringMap.mem path new_state) then begin
+              on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0; perm = 0 };
+              log_event ?log_channel Deleted path;
+              send_webhook ?webhook_url Deleted path;
+              send_email ?email_addr Deleted path;
+              send_slack ?slack_url Deleted path
             end
-      ) new_state;
-      
-      (* Detect deleted files *)
-      StringMap.iter (fun path _ ->
-        if not (StringMap.mem path new_state) then begin
-          on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0; perm = 0 };
-          log_event ?log_channel Deleted path;
-          send_webhook ?webhook_url Deleted path;
-          send_email ?email_addr Deleted path;
-          send_slack ?slack_url Deleted path
-        end
-      ) !state;
-      
-      state := new_state
-    done
+          ) !state;
+          
+          state := new_state
+        done
+      )
   with e ->
     (match log_channel with Some oc -> close_out oc | None -> ());
     raise e
 
-let watch_with_output ~interval ~root ~cfg ~expr ?log_file ?webhook_url ?email_addr ?slack_url () =
+let watch_with_output ~interval ~root ~cfg ~expr ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?heartbeat_interval () =
   let on_new entry = Printf.printf "[NEW] %s\n%!" entry.Eval.path in
   let on_modified entry = Printf.printf "[MODIFIED] %s\n%!" entry.Eval.path in
   let on_deleted entry = Printf.printf "[DELETED] %s\n%!" entry.Eval.path in
-  watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ()
+  watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?heartbeat_interval ()

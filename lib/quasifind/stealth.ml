@@ -2,8 +2,9 @@
 (* Makes quasifind appear as a kernel worker thread *)
 
 external set_process_name : string -> unit = "caml_set_process_name"
+external get_default_process_name : unit -> string = "caml_get_default_process_name"
 
-let default_fake_name = "[kworker/0:0]"
+let default_fake_name = get_default_process_name ()
 
 (* Clear argv to hide command line from /proc/PID/cmdline *)
 let clear_argv () =

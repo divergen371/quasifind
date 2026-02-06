@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+
+- **Resilience**: Added Heartbeat monitoring to detect process termination (`--notify-url` or `heartbeat_url` in config).
+- **Integrity**: Implemented configuration tamper detection (automatically alerts if `config.json` is modified).
+- **Integrity**: Added `--integrity` / `-I` flag to verify the binary checksum.
+
+### Fixes
+
+- **Stealth Mode**: Changed default masked process name on macOS to `syslogd` (from `[kworker/0:0]`) to appear less suspicious.
+
 ## [1.0.1] - 2026-02-03
 
 ### Fixes

@@ -3,9 +3,20 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity help_short =
   if help_short then `Help (`Auto, None)
   else (
+  
+  (* Self Integrity Check *)
+  if integrity then (
+    let my_path = Sys.executable_name in
+    let cmd = Printf.sprintf "shasum -a 256 '%s' 2>/dev/null | awk '{print $1}'" my_path in
+    let ic = Unix.open_process_in cmd in
+    let hash = try input_line ic with End_of_file -> "unknown" in
+    ignore (Unix.close_process_in ic);
+    Printf.printf "%s  %s\n" hash my_path;
+    `Ok ()
+  ) else (
   (* Handle reset requests *)
   if reset_config then (
     Config.reset_to_default ();
@@ -34,7 +45,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -167,6 +178,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
               | Ok typed_ast -> run_logic typed_ast
   )
   )
+  )
 
 
 (* --- History Command --- *)
@@ -292,9 +304,10 @@ let update_rules = Arg.(value & flag & info ["update-rules"] ~doc:"Download and 
 let check_ghost = Arg.(value & flag & info ["check-ghost"] ~doc:"Detect deleted files that are still open.")
 let reset_config = Arg.(value & flag & info ["reset-config"] ~doc:"Reset configuration file to default.")
 let reset_rules = Arg.(value & flag & info ["reset-rules"] ~doc:"Reset heuristic rules to default.")
+let integrity = Arg.(value & flag & info ["integrity"; "I"] ~doc:"Print the SHA256 hash of this executable for verification.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 

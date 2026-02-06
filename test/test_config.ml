@@ -8,6 +8,8 @@ let test_config_json_roundtrip () =
     email = Some "test@example.com";
     webhook_url = Some "https://example.com/hook";
     slack_url = None;
+    heartbeat_url = Some "http://localhost:8080";
+    heartbeat_interval = 30;
     rule_sources = [];
   } in
   let json = Config.t_to_json config in
