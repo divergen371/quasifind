@@ -61,3 +61,12 @@
     - [x] Support `--exec` in client
   - [x] **Optimization**
     - [x] Pruning in `Vfs.fold` based on query
+
+- [x] **Phase 6: Lifecycle & Stability**
+  - [x] **Graceful Shutdown**
+    - [x] Implement shutdown flag for controlled exit
+    - [x] Stop all fibers (Watcher/IPC) on shutdown
+    - [x] Unified VFS persistence (No duplicate save)
+  - [x] **Documentation**
+    - [x] Detailed "Future Improvements" plan (37 items)
+    - [x] Finalize experiment results in walkthrough

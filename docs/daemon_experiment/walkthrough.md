@@ -110,8 +110,58 @@ The Daemon Mode experiment is a success. We have a working prototype that:
 3. Updates in real-time (Watcher).
 4. Serves queries instantly (IPC).
 
-Future work:
+## Phase 4 & 5: Advanced Features & Optimizations (Completed)
 
-- Persistence (save VFS to disk).
-- Advanced querying (full regex support over IPC - partially implemented).
-- Optimize `Vfs.fold` (pruning).
+### Implementation
+
+1. **Adaptive Radix Tree (ART)**: Replaced the standard Map with a custom ART implementation for the VFS, optimized for path queries.
+2. **Pruning in `Vfs.fold`**: Integrated `Eval.can_prune_path` to skip irrelevant directory subtrees during search, significantly improving query speed.
+3. **Persistent Cache**: Implemented VFS serialization to disk (`~/.cache/quasifind/daemon.dump`). The daemon now loads the state on startup and saves it on exit.
+4. **Full Regex Support**: Enabled complex regex queries over IPC.
+
+### Verification
+
+- **Persistence**: Verified that `quasifind daemon` loads 2000+ nodes instantly from cache.
+- **Pruning**: Queries like `path == "lib/..."` are now faster as they don't visit `bin/` or `test/`.
+- **IPC Reliability**: Stress-tested with multiple queries and verified correct results.
+
+## Phase 6: Lifecycle & Stability (Completed)
+
+### Implementation
+
+1. **Graceful Shutdown**:
+   - Refactored `daemon.ml` to use a `shutdown_requested` flag instead of exceptions.
+   - Stopped all fibers (Watcher scanning, Integrity check, Heartbeat, and IPC server) correctly when receiving a shutdown request.
+   - Unified VFS saving at the very end of the process to ensure data integrity without duplication.
+2. **Improved Error Handling**:
+   - Added user-friendly error messages for `daemon stop` when the daemon is not running.
+   - Fixed escape sequences in help documentation.
+
+### Verification
+
+**Command:**
+
+```bash
+quasifind daemon stop
+```
+
+**Results:**
+
+- Daemon sends confirmation response: `"Daemon shutting down..."`
+- IPC server stops, Watcher stops, VFS is saved once, and process exits with code 0.
+- No more ghost processes or duplicate dumps.
+
+## Final Conclusion
+
+The Daemon Mode experiment is now a production-ready feature (experimental).
+It provides:
+
+1. **Instant Search**: Served from RAM with pruning optimization.
+2. **Real-time Sync**: Watcher keeps VFS up to date.
+3. **Persistence**: State survives restarts.
+4. **Clean Lifecycle**: Graceful shutdown and stable IPC.
+
+**Technical Debt & Future Work**:
+We have documented **37 improvement items** in [future_improvements.md](file:///Users/atsushi/OCaml/quasifind/docs/daemon_experiment/future_improvements.md), ranging from SIMD optimizations to Patricia Trie compression and interactive REPL mode.
+
+**Experiment Status**: SUCCESS / READY FOR MERGE
