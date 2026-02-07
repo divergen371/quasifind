@@ -20,7 +20,9 @@
   rule_loader
   rule_converter
   dirent
-  search)
+  search
+  vfs
+  daemon)
  (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)

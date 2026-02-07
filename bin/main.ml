@@ -307,6 +307,10 @@ let reset_rules = Arg.(value & flag & info ["reset-rules"] ~doc:"Reset heuristic
 let integrity = Arg.(value & flag & info ["integrity"; "I"] ~doc:"Print the SHA256 hash of this executable for verification.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
+(* --- Daemon Command (Experimental) --- *)
+let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
+let daemon_info = Cmd.info "daemon" ~doc:"Start the Quasifind daemon (Experimental)."
+
 let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
@@ -331,6 +335,9 @@ let () =
   else if n > 1 && argv.(1) = "history" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v history_info history_t))
+  else if n > 1 && argv.(1) = "daemon" then
+    let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
+    exit (Cmd.eval ~argv:new_argv (Cmd.v daemon_info daemon_t))
   else if n > 1 && argv.(1) = "search" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v search_info search_t))
