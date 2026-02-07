@@ -369,9 +369,10 @@ type 'a t = {
 
 ### 35. SIMD content search
 
-- AVX2/NEONでのパターンマッチ
-- memchrの高速化
-- 固定文字列検索で100x高速化の可能性
+- **ARM NEON (Apple Silicon)** / AVX2 (Intel/AMD) でのパターンマッチ
+- `memchr` の高速化や `string.indexOf` の SIMD 化
+- 固定文字列検索で 100x 高速化の可能性
+- Apple Silicon の NEON ユニットは非常に強力なため、大幅な性能向上が期待できる
 
 ---
 
