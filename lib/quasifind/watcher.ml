@@ -124,7 +124,7 @@ let get_file_hash path =
   ignore (Unix.close_process_in ic);
   hash
 
-let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) () =
+let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) () =
   Printf.eprintf "[Watch] Monitoring %s (interval: %.1fs, Ctrl+C to stop)\n%!" root interval;
   
   (* Open log file if specified *)
@@ -158,19 +158,14 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
   let state = ref (scan_files config) in
   
   Printf.eprintf "[Watch] Initial scan: %d files matching\n%!" (StringMap.cardinal !state);
-  
-  (* Main loop with Eio to support concurrent heartbeat *)
-  try
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-      
+
       (* Fiber 1: Heartbeat (if enabled) *)
       (match heartbeat_url with
       | Some url ->
           Eio.Fiber.fork ~sw (fun () ->
             while true do
               send_heartbeat url;
-              Eio.Time.sleep env#clock (float_of_int heartbeat_interval)
+              Eio.Time.sleep clock (float_of_int heartbeat_interval)
             done
           )
       | None -> ());
@@ -178,7 +173,7 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
       (* Fiber 2: Integrity Check *)
       Eio.Fiber.fork ~sw (fun () ->
         while true do
-          Eio.Time.sleep env#clock (interval *. 5.0); (* Check less frequently than main scan *)
+          Eio.Time.sleep clock (interval *. 5.0); (* Check less frequently than main scan *)
           List.iter (fun path ->
             let current_hash = get_file_hash path in
             match Hashtbl.find_opt config_hashes path with
@@ -222,46 +217,52 @@ let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file 
 
       (* Fiber 3: File Scanning *)
       Eio.Fiber.fork ~sw (fun () ->
-        while true do
-          Eio.Time.sleep env#clock interval;
-          let new_state = scan_files config in
-          
-          (* Detect new and modified files *)
-          StringMap.iter (fun path file ->
-            match StringMap.find_opt path !state with
-            | None ->
-                on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
-                log_event ?log_channel New path;
-                send_webhook ?webhook_url New path;
-                send_email ?email_addr New path;
-                send_slack ?slack_url New path
-            | Some old_file ->
-                if file.mtime > old_file.mtime then begin
-                  on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
-                  log_event ?log_channel Modified path;
-                  send_webhook ?webhook_url Modified path;
-                  send_email ?email_addr Modified path;
-                  send_slack ?slack_url Modified path
-                end
-          ) new_state;
-          
-          (* Detect deleted files *)
-          StringMap.iter (fun path _ ->
-            if not (StringMap.mem path new_state) then begin
-              on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0; perm = 0 };
-              log_event ?log_channel Deleted path;
-              send_webhook ?webhook_url Deleted path;
-              send_email ?email_addr Deleted path;
-              send_slack ?slack_url Deleted path
-            end
-          ) !state;
-          
-          state := new_state
-        done
+        try
+          while true do
+            Eio.Time.sleep clock interval;
+            let new_state = scan_files config in
+            
+            (* Detect new and modified files *)
+            StringMap.iter (fun path file ->
+              match StringMap.find_opt path !state with
+              | None ->
+                  on_new { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
+                  log_event ?log_channel New path;
+                  send_webhook ?webhook_url New path;
+                  send_email ?email_addr New path;
+                  send_slack ?slack_url New path
+              | Some old_file ->
+                  if file.mtime > old_file.mtime then begin
+                    on_modified { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = file.mtime; perm = file.perm };
+                    log_event ?log_channel Modified path;
+                    send_webhook ?webhook_url Modified path;
+                    send_email ?email_addr Modified path;
+                    send_slack ?slack_url Modified path
+                  end
+            ) new_state;
+            
+            (* Detect deleted files *)
+            StringMap.iter (fun path _ ->
+              if not (StringMap.mem path new_state) then begin
+                on_deleted { Eval.name = Filename.basename path; path; kind = Ast.File; size = 0L; mtime = 0.0; perm = 0 };
+                log_event ?log_channel Deleted path;
+                send_webhook ?webhook_url Deleted path;
+                send_email ?email_addr Deleted path;
+                send_slack ?slack_url Deleted path
+              end
+            ) !state;
+            
+            state := new_state
+          done
+        with e ->
+          (match log_channel with Some oc -> close_out oc | None -> ());
+          raise e
       )
-  with e ->
-    (match log_channel with Some oc -> close_out oc | None -> ());
-    raise e
+
+let watch ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) () =
+  Eio_main.run @@ fun env ->
+  Eio.Switch.run @@ fun sw ->
+    watch_fibers ~sw ~clock:env#clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ~heartbeat_interval ()
 
 let watch_with_output ~interval ~root ~cfg ~expr ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?heartbeat_interval () =
   let on_new entry = Printf.printf "[NEW] %s\n%!" entry.Eval.path in

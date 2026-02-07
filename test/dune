@@ -61,3 +61,15 @@
 (test
  (name test_watcher)
  (libraries quasifind alcotest))
+
+(test
+ (name test_art)
+ (libraries quasifind alcotest))
+
+(test
+ (name test_vfs)
+ (libraries quasifind alcotest))
+
+(test
+ (name test_ipc)
+ (libraries quasifind alcotest yojson))

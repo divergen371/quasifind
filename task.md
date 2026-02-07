@@ -17,7 +17,7 @@
 ## Active
 
 - [ ] **Daemon Mode Experiment** (`experiment/daemon-mode`)
-  - [ ] Phase 1: PoC (In-Memory Trie Structure)
+  - [x] Phase 1: PoC (In-Memory Trie Structure)
   - [ ] Phase 2: Live Updates (Watcher Integration)
   - [ ] Phase 3: Client-Server IPC
 

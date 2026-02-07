@@ -17,12 +17,15 @@
   stealth
   suspicious
   ghost
+  intern
   rule_loader
   rule_converter
   dirent
   search
   vfs
-  daemon)
+  ipc
+  daemon
+  art)
  (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)

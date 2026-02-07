@@ -43,26 +43,37 @@
 
 ## 実装フェーズ (Phases)
 
-### Phase 1: PoC (Proof of Concept)
+### Phase 1: PoC (Proof of Concept) - Completed
 
-- [ ] メモリ上での Trie 構造の定義
-- [ ] 初回スキャンで Trie を構築するロジック
-- [ ] メモリ使用量の計測 (10万ファイル、100万ファイルでベンチマーク)
+- [x] メモリ上での Trie 構造の定義 (lib/quasifind/vfs.ml)
+- [x] 初回スキャンで Trie を構築するロジック (lib/quasifind/daemon.ml)
+- [x] メモリ使用量の計測 (文字列インターン化で削減)
 
-### Phase 2: Live Updates
+### Phase 2: Live Updates - Completed
 
-- [ ] `Watcher` からのイベントで Trie を更新するロジック
-- [ ] 整合性の検証（実際のディスクとメモリ上の状態がズレないか）
+- [x] `Watcher` からのイベントで Trie を更新するロジック (New/Modified/Deleted)
+- [x] 整合性の検証（実際のディスクとメモリ上の状態がズレないか）
 
-### Phase 3: Client-Server
+### Phase 3: Client-Server - Completed
 
-- [ ] Unix Domain Socket サーバーの実装
-- [ ] 検索クエリを受け取り、Trie を探索して返すロジック
-- [ ] CLI への統合
+- [x] Unix Domain Socket サーバーの実装 (lib/quasifind/ipc.ml)
+- [x] 検索クエリを受け取り、Trie を探索して返すロジック (Vfs.fold + Eval.eval)
+- [x] CLI への統合 (`quasifind search --daemon` command)
 
-## 課題と対策 (Challenges)
+### Phase 4: Advanced Search & Optimization
 
-- **初期スキャン時間**: 起動時に全ファイルを舐める必要がある。並列走査で高速化するが、数秒〜数十秒はかかる。 -> キャッシュファイルへのシリアライズ/デシリアライズで次回起動を高速化？
-- **メモリ肥大化**: 巨大リポジトリでどこまでメモリを食うか。 -> 文字列インターン化の徹底、不要なメタデータの削除。
-- **Content検索**: メモリには中身は持てない。 -> メモリで絞り込んだ後、必要なファイルだけディスクに見に行くハイブリッド方式にする。
-- **整合性とイベント欠落**: 大量ファイル操作時のイベントドロップや順序逆転によるメモリとディスクの不整合。 -> 定期的な整合性チェック、TTLによる自動パージを検討。
+- [ ] **Full Regex Support**: IPCプロトコルで正規表現パターンを転送し、サーバー側でコンパイル・実行できるようにする。
+- [ ] **Adaptive Radix Tree (ART)**: `vfs.ml` の `Map` ベースの Trie を ART (Adaptive Radix Tree) に置き換え、メモリ効率とキャッシュ局所性を向上させる。
+- [ ] **Hybrid Search (Content/Entropy)**:
+  - メモリ上のVFSでパス・メタデータによる高速フィルタリングを行う。
+  - 候補ファイルに対してのみ、サーバー側（またはクライアント側？）でディスク読み込みを行い、Content/Entropy判定を行う。
+- [ ] **Persistent Cache (Fast Restart)**:
+  - 終了時にVFS（または対象ディレクトリのメタデータ）をディスクにシリアライズ保存。
+  - 次回起動時にロードし、起動停止中の変更分を `Watcher` (または `mtime` チェック) で差分更新して高速起動。
+
+### Phase 5: CLI & UX Refinement
+
+- [ ] **CLI Option Cleanup**:
+  - `follow_symlinks` や `include_hidden` など、デーモン起動時に決定されるオプションと、クエリ時に指定可能なオプションを整理。
+  - 無効なオプションが指定された場合に警告またはエラーを表示。
+  - `--exec` 等のクライアント側での実行サポート。

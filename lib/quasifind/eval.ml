@@ -159,3 +159,42 @@ let rec requires_metadata (expr : Typed.expr) : bool =
   | And (e1, e2) | Or (e1, e2) -> requires_metadata e1 || requires_metadata e2
   | Name _ | Path _ | Content _ | Entropy _ | Type _ -> false (* Type is handled via Dirent.kind, Content/Entropy read file directly but don't strictly need stat for filtering if logic separates them *)
   | Size _ | MTime _ | Perm _ -> true
+
+(* Path pruning analysis: Check if a directory path can be pruned.
+   Returns true if we can definitively skip this directory and all its children.
+   Conservative: only prunes when we're absolutely sure nothing below can match. *)
+let rec can_prune_path (dir_path : string) (expr : Typed.expr) : bool =
+  match expr with
+  | True -> false  (* Can't prune - everything matches *)
+  | False -> true  (* Can prune - nothing matches *)
+  | Not e -> 
+      (* Can't easily prune negations - be conservative *)
+      if can_prune_path dir_path e then false else false
+  | And (e1, e2) -> 
+      (* If either branch says prune, we can prune *)
+      can_prune_path dir_path e1 || can_prune_path dir_path e2
+  | Or (e1, e2) -> 
+      (* Both branches must agree to prune *)
+      can_prune_path dir_path e1 && can_prune_path dir_path e2
+  | Path (StrEq target) ->
+      (* Path must equal target - prune if dir_path is not a prefix of target *)
+      let target_norm = if String.length target > 0 && target.[0] = '.' then target else "./" ^ target in
+      let dir_norm = if String.length dir_path > 0 && dir_path.[0] = '.' then dir_path else "./" ^ dir_path in
+      not (String.starts_with ~prefix:dir_norm target_norm || String.starts_with ~prefix:target_norm dir_norm)
+  | Path (StrRe (pattern, _)) ->
+      (* Check if pattern has a literal prefix we can use *)
+      (* Extract prefix before any regex metacharacter *)
+      let rec find_prefix i =
+        if i >= String.length pattern then pattern
+        else match pattern.[i] with
+        | '.' | '*' | '+' | '?' | '[' | '(' | '{' | '|' | '^' | '$' | '\\' -> String.sub pattern 0 i
+        | _ -> find_prefix (i + 1)
+      in
+      let prefix = find_prefix 0 in
+      if String.length prefix > 2 then
+        let dir_norm = if String.length dir_path > 0 && dir_path.[0] = '.' then dir_path else "./" ^ dir_path in
+        not (String.starts_with ~prefix:dir_norm prefix || String.starts_with ~prefix dir_norm)
+      else
+        false (* Prefix too short, can't prune safely *)
+  | Name _ | Path (StrNe _) | Content _ | Entropy _ | Type _ | Size _ | MTime _ | Perm _ ->
+      false (* These don't constrain path prefix, can't prune *)

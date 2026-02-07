@@ -7,52 +7,130 @@ let run ~root =
   Printf.printf "Starting Quasifind Daemon (Experimental)...\n";
   Printf.printf "Root Scope: %s\n" root;
 
-  (* Initialize VFS *)
-  let vfs = ref Vfs.empty in
-  
-  (* Initial Scan - Using `find` command for simplicity in PoC phase *)
-  (* Phase 2 will use native recursive traversal *)
-  Printf.printf "Scanning filesystem...\n%!";
-  let start_time = Unix.gettimeofday () in
-  
-  (* Scan using `find` to get paths, then stat in OCaml for portability *)
-  let cmd = Printf.sprintf "find '%s'" root in
-  let ic = Unix.open_process_in cmd in
-  
-  try
-    while true do
-      let path = input_line ic in
-      if path <> root then (
-        try
-          let stats = Unix.lstat path in
-          let kind = 
-            match stats.st_kind with
-            | Unix.S_REG -> `File
-            | Unix.S_DIR -> `Dir
-            | _ -> `File (* Treat others as file for now *)
-          in
-          let size = Int64.of_int stats.st_size in
-          let mtime = stats.st_mtime in
-          let perm = stats.st_perm in
-          vfs := Vfs.insert !vfs path kind size mtime perm
-        with Unix.Unix_error _ -> ()
-      )
-    done
-  with End_of_file ->
-    ignore (Unix.close_process_in ic);
+    let cache_dir = 
+      let home = try Sys.getenv "HOME" with Not_found -> "/tmp" in
+      let dir = Filename.concat home ".cache" in
+      let qf_dir = Filename.concat dir "quasifind" in
+      if not (Sys.file_exists qf_dir) then Unix.mkdir qf_dir 0o700;
+      qf_dir
+    in
+    let dump_path = Filename.concat cache_dir "daemon.dump" in
+
+    let save_vfs vfs =
+      Printf.printf "Saving VFS to %s...\n%!" dump_path;
+      Vfs.save vfs dump_path
+    in
+
+    (* Initialize VFS - Load if exists *)
+    let vfs = ref (
+      match Vfs.load dump_path with 
+      | Some t -> Printf.printf "Loaded VFS from cache.\n%!"; t 
+      | None -> Vfs.empty
+    ) in
     
-    let duration = Unix.gettimeofday () -. start_time in
-    let count = Vfs.count_nodes !vfs in
-    Printf.printf "Scan complete in %.2fs. Loaded %d nodes.\n%!" duration count;
-    
+    (* Register exit hook (best effort) *)
+    at_exit (fun () -> save_vfs !vfs);
+
     (* Enter Event Loop *)
-    Eio_main.run @@ fun env ->
-    Eio.Switch.run @@ fun sw ->
-      Printf.printf "Daemon is running. Press Ctrl+C to stop.\n%!";
-      (* Placeholder for IPC server and Watcher *)
-      while true do
-        Eio.Time.sleep env#clock 10.0;
-        Printf.printf "Daemon heartbeat (Nodes: %d)\n%!" (Vfs.count_nodes !vfs);
-        (* For debug, print tree occasionally *)
-        (* Vfs.print_tree ~max_depth:2 !vfs *)
-      done
+    try
+      Eio_main.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+
+      (* We need a mutex, but `vfs` is `t ref`. *)
+      let vfs_mutex = Eio.Mutex.create () in
+    
+    let update_vfs_insert entry =
+      let entry_kind = match entry.Eval.kind with Ast.Dir -> `Dir | _ -> `File in
+      Eio.Mutex.use_rw ~protect:true vfs_mutex (fun () ->
+        vfs := Vfs.insert !vfs entry.Eval.path entry_kind entry.Eval.size entry.Eval.mtime entry.Eval.perm
+      )
+    in
+    
+    let update_vfs_remove entry =
+      Eio.Mutex.use_rw ~protect:true vfs_mutex (fun () ->
+        vfs := Vfs.remove !vfs entry.Eval.path
+      )
+    in
+
+    let on_new entry = update_vfs_insert entry in
+    let on_modified entry = update_vfs_insert entry in
+    let on_deleted entry = update_vfs_remove entry in
+
+    let config : Traversal.config = {
+      strategy = Parallel (Domain.recommended_domain_count ());
+      max_depth = None;
+      follow_symlinks = false; 
+      include_hidden = true;
+      ignore = [".git"; "_build"];
+      ignore_re = [];
+      preserve_timestamps = false;
+      spawn = None;
+    } in
+
+    Printf.printf "Perform Initial VFS Scan...\n%!";
+    (* We still scan to ensure consistency, but ART insert is fast *)
+    Traversal.traverse config root Ast.Typed.True (fun entry -> on_new entry);
+
+    Printf.printf "Daemon running with Watcher (Interval: 2.0s)...\n%!";
+
+    (* Start Watcher Fibers *)
+    Watcher.watch_fibers 
+      ~sw 
+      ~clock:env#clock 
+      ~interval:2.0 
+      ~root 
+      ~cfg:config 
+      ~expr:Ast.Typed.True
+      ~on_new ~on_modified ~on_deleted
+      (* Disable notifications for now to avoid spam during dev *)
+      (* ?log_file, ?webhook_url etc can be passed if needed *)
+      ();
+
+    (* Start IPC Server *)
+    Eio.Fiber.fork ~sw (fun () ->
+      let handler request =
+        match request with
+        | Ipc.Stats ->
+            let count = Vfs.count_nodes !vfs in
+            Ipc.Success (`Assoc [("nodes", `Int count)])
+        | Ipc.Shutdown ->
+             save_vfs !vfs;
+            Eio.Switch.fail sw (Failure "Shutdown requested via IPC");
+            (* This line might not be reached if fail throws *)
+            Ipc.Success (`String "Shutting down...")
+        | Ipc.Query expr ->
+            let start_t = Unix.gettimeofday () in
+            (* Snapshot VFS *)
+            let current_vfs = !vfs in
+            let results = 
+              (* Use query-based pruning to skip irrelevant subtrees *)
+              Vfs.fold_with_query (fun acc entry ->
+                (* Evaluate entry against query *)
+                if Eval.eval start_t expr entry then
+                  let json_entry = `Assoc [
+                    ("path", `String entry.Eval.path);
+                    ("name", `String entry.Eval.name);
+                    ("size", `Int (Int64.to_int entry.Eval.size)); (* Potential overflow for huge files in JSON *)
+                    ("mtime", `Float entry.Eval.mtime);
+                  ] in
+                  json_entry :: acc
+                else 
+                  acc
+              ) [] current_vfs expr
+            in
+            Ipc.Success (`List results)
+      in
+      try Ipc.run ~sw ~net:env#net handler
+      with e -> Printf.eprintf "IPC Server Error: %s\n%!" (Printexc.to_string e)
+    );
+
+    (* Daemon Status Loop *)
+
+    while true do
+      Eio.Time.sleep env#clock 10.0;
+      Printf.printf "Daemon heartbeat (Nodes: %d)\n%!" (Vfs.count_nodes !vfs);
+    done
+    with e -> 
+      save_vfs !vfs;
+      Printf.eprintf "Daemon crash/exit: %s\n%!" (Printexc.to_string e);
+      raise e

@@ -93,14 +93,14 @@ let value_p =
     (regex_literal >>| fun s -> VRegex s);
     (file_type_p >>| fun t -> VType t);
     (quoted_string >>| fun s -> VString s);
+    (float_p >>| fun f -> VFloat f);
     (int64_p >>= fun n ->
       choice [
         (size_unit_p >>| fun u -> VSize (n, u));
         (dur_unit_p >>| fun u -> VDur (n, u));
         (return (VInt n))
       ]
-    );
-    (float_p >>| fun f -> VFloat f)
+    )
   ]
 
 let cmp_op_p =

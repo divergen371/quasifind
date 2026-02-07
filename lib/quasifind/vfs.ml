@@ -1,5 +1,5 @@
 (* Virtual File System (VFS) for Daemon Mode *)
-(* Provides an in-memory representation of the filesystem using a Trie *)
+(* Backed by Adaptive Radix Tree (ART) *)
 
 type inode = {
   size : int64;
@@ -7,78 +7,159 @@ type inode = {
   perm : int;
 }
 
-module StringMap = Map.Make(String)
+type entry = {
+  kind : Ast.file_type;
+  inode : inode;
+}
 
-type node = 
-  | File of inode
-  | Dir of inode * node StringMap.t
+type t = entry Art.t
 
-type t = node
-
-let empty = Dir ({ size = 0L; mtime = 0.0; perm = 0o755 }, StringMap.empty)
+let empty = Art.empty
 
 (* Helper to split path into components *)
 let split_path path =
   String.split_on_char '/' path
   |> List.filter (fun s -> s <> "" && s <> ".")
+  |> List.map Intern.intern
 
 (* Insert a file/dir into the VFS *)
+(* Note: Art.insert updates the node at path. *)
 let insert t path kind size mtime perm =
-  let rec insert_node node parts =
-    match node, parts with
-    | Dir (inode, children), [] ->
-        (* Exact match: update inode or replace if kind changed *)
-        (* For now, just update inode, assuming kind is same or we overwrite *)
-        (match kind with
-         | `File -> File { size; mtime; perm }
-         | `Dir -> Dir ({ size; mtime; perm }, children)) (* Preserve children *)
-    
-    | Dir (inode, children), part :: rest ->
-        let child = 
-          match StringMap.find_opt part children with
-          | Some c -> c
-          | None -> Dir ({ size = 0L; mtime = 0.0; perm = 0o755 }, StringMap.empty) (* Default intermediate dir *)
-        in
-        let new_child = insert_node child rest in
-        Dir (inode, StringMap.add part new_child children)
-
-    | File _, _ ->
-        (* Conflict: path treats a file as a directory *)
-        (* In a real FS, this is impossible unless the file was deleted/replaced. *)
-        (* For PoC, we mimic `mkdir -p` behavior by overwriting file with dir if needed? *)
-        (* Or just fail/log. Let's overwrite for now. *)
-        let new_dir = Dir ({ size = 0L; mtime = 0.0; perm = 0o755 }, StringMap.empty) in
-        insert_node new_dir parts
+  let parts = split_path path in
+  (* Check if we need to map generic kind to specific Ast kind *)
+  let entry_kind = match kind with 
+    | `Dir -> Ast.Dir 
+    | `File -> Ast.File 
   in
-  insert_node t (split_path path)
+  
+  let entry = {
+    kind = entry_kind;
+    inode = { size; mtime; perm }
+  } in
+  
+  Art.insert t parts entry
 
-(* Lookup a node by path *)
+(* Remove a node by path *)
+let remove t path =
+  let parts = split_path path in
+  Art.remove t parts
+
+(* Lookup *)
+(* Original find_opt returned `node option`. Here we can just return `entry option`? 
+   But external consumers like Daemon might not use find_opt directly?
+   Daemon.ml ONLY uses `insert`, `remove`, `count_nodes`, `fold`.
+   It does NOT use `find_opt`.
+   So I can drop `find_opt` or adapt it if I want.
+*)
 let find_opt t path =
-  let rec find_node node parts =
-    match node, parts with
-    | _, [] -> Some node
-    | Dir (_, children), part :: rest ->
-        (match StringMap.find_opt part children with
-         | Some child -> find_node child rest
-         | None -> None)
-    | File _, _ -> None
-  in
-  find_node t (split_path path)
+  let parts = split_path path in
+  Art.find_opt t parts
 
-(* Calculate total nodes (for stats) *)
-let rec count_nodes = function
-  | File _ -> 1
-  | Dir (_, children) -> 
-      1 + (StringMap.fold (fun _ child acc -> acc + count_nodes child) children 0)
+(* Count nodes *)
+let count_nodes t = Art.count_nodes t
 
-(* Debug: Print tree structure (limited depth) *)
-let print_tree ?(max_depth=2) t =
-  let rec print_node indent depth name node =
-    if depth > max_depth then () else
-    match node with
-    | File inode -> Printf.printf "%s- %s (size=%Ld)\n" indent name inode.size
-    | Dir (inode, children) ->
-        Printf.printf "%s+ %s/\n" indent name;
-        StringMap.iter (fun n c -> print_node (indent ^ "  ") (depth + 1) n c) children
+(* Fold *)
+(* Original fold: (f : 'a -> Eval.entry -> 'a) -> 'a -> t -> 'a *)
+(* Art.fold: ('a -> 'b -> 'a) -> 'a -> 'b t -> 'a *)
+(* So Art.fold passes `entry` (our value). We need to reconstruct full `Eval.entry`. *)
+(* But `Art.fold` as implemented in `Art.ml` folds over values. *)
+(* Does it provide the key/path? *)
+(* `Art.fold` implementation: `let acc = match node.value ... in List.fold ... child` *)
+(* It does NOT pass the path to the function. *)
+(* `Vfs.fold` requires constructing full path for `Eval.entry`. *)
+(* I need `Art.fold_path` or similar. *)
+
+(* Let's add `fold_path` to Art.ml later or reimplement fold here by traversing Art manually? *)
+(* Accessing `Art.t` structure requires `Art.children` types to be exposed. *)
+(* I defined types in `Art.ml` but they are open. *)
+
+(* Let's define `fold` here by recurring on Art structure if visible, or update Art.ml to export `fold_with_path`. *)
+(* `Art.ml` types are visible. *)
+
+let fold (f : 'a -> Eval.entry -> 'a) (acc : 'a) (t : t) : 'a =
+  let rec traverse acc path_prefix node =
+    let acc = 
+      match node.Art.value with
+      | None -> acc
+      | Some entry ->
+          let full_path = 
+            if path_prefix = "" then "." 
+            else path_prefix 
+          in
+          let eval_entry = {
+            Eval.name = Filename.basename full_path;
+            path = full_path;
+            kind = entry.kind;
+            size = entry.inode.size;
+            mtime = entry.inode.mtime;
+            perm = entry.inode.perm;
+          } in
+          f acc eval_entry
+    in
+    match node.Art.children with
+    | Art.Small list ->
+        List.fold_left (fun acc (key, child) ->
+          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+          traverse acc child_path child
+        ) acc list
+    | Art.Large map ->
+        Art.PathMap.fold (fun key child acc ->
+          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+          traverse acc child_path child
+        ) map acc
   in
-  print_node "" 0 "." t
+  traverse acc "" t
+
+(* Optimized fold with query-based pruning *)
+let fold_with_query (f : 'a -> Eval.entry -> 'a) (acc : 'a) (t : t) (expr : Ast.Typed.expr) : 'a =
+  let rec traverse acc path_prefix node =
+    (* Check if we can prune this subtree *)
+    if path_prefix <> "" && Eval.can_prune_path path_prefix expr then
+      acc (* Skip this entire subtree *)
+    else begin
+      let acc = 
+        match node.Art.value with
+        | None -> acc
+        | Some entry ->
+            let full_path = 
+              if path_prefix = "" then "." 
+              else path_prefix 
+            in
+            let eval_entry = {
+              Eval.name = Filename.basename full_path;
+              path = full_path;
+              kind = entry.kind;
+              size = entry.inode.size;
+              mtime = entry.inode.mtime;
+              perm = entry.inode.perm;
+            } in
+            f acc eval_entry
+      in
+      match node.Art.children with
+      | Art.Small list ->
+          List.fold_left (fun acc (key, child) ->
+            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+            traverse acc child_path child
+          ) acc list
+      | Art.Large map ->
+          Art.PathMap.fold (fun key child acc ->
+            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+            traverse acc child_path child
+          ) map acc
+    end
+  in
+  traverse acc "" t
+
+(* Serialization *)
+let save (t : t) (path : string) : unit =
+  let oc = open_out_bin path in
+  Marshal.to_channel oc t [];
+  close_out oc
+
+let load (path : string) : t option =
+  try
+    let ic = open_in_bin path in
+    let t = Marshal.from_channel ic in
+    close_in ic;
+    Some t
+  with _ -> None

@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short =
   if help_short then `Help (`Auto, None)
   else (
   
@@ -45,7 +45,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false false
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -54,10 +54,11 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
 
       (* Common execution logic *)
       let run_logic typed_ast =
-        Eio_main.run @@ fun _env ->
+        Eio_main.run @@ fun env ->
+        Eio.Switch.run @@ fun sw ->
         let now = Unix.gettimeofday () in
-        let mgr = Eio.Stdenv.process_mgr _env in
-        let domain_mgr = Eio.Stdenv.domain_mgr _env in
+        let mgr = Eio.Stdenv.process_mgr env in
+        let domain_mgr = Eio.Stdenv.domain_mgr env in
         let spawn_fn = fun f -> Eio.Domain_manager.run domain_mgr f in
         
         let concurrency = match jobs with | None -> 1 | Some n -> n in
@@ -97,10 +98,51 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
              loop ()
           )
           (fun () ->
-             (* Producer Fiber: Traversal *)
-             Traversal.traverse cfg root_dir typed_ast (fun entry ->
-               if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
-                 Eio.Stream.add results_stream (Some entry)
+             (* Producer Fiber: Traversal or Daemon Query *)
+             let use_daemon = 
+               watch_mode = false && daemon_mode
+             in
+
+             let used_daemon = ref false in
+             
+             if use_daemon then (
+               (* Warn about ignored options in daemon mode *)
+               if Option.is_some jobs then
+                 Printf.eprintf "[Warning] -j/--jobs is ignored in daemon mode (daemon uses its own parallelism)\n%!";
+               if Option.is_some max_depth then
+                 Printf.eprintf "[Warning] -d/--max-depth is ignored in daemon mode\n%!";
+               if follow_symlinks then
+                 Printf.eprintf "[Warning] -L/--follow is ignored in daemon mode\n%!";
+               if include_hidden then
+                 Printf.eprintf "[Warning] -H/--hidden is always enabled in daemon mode\n%!";
+               if exclude <> [] then
+                 Printf.eprintf "[Warning] -E/--exclude is ignored in daemon mode (use daemon config)\n%!";
+               
+               let socket = Ipc.socket_path () in
+               if Sys.file_exists socket then (
+                 Printf.eprintf "[Info] Querying daemon...\r%!";
+                 match Ipc.Client.query ~sw ~net:env#net typed_ast with
+                 | Ok entries ->
+                     List.iter (fun e -> 
+                       (* Support --exec in daemon client mode *)
+                       (match exec_command with
+                       | Some cmd_tmpl -> Exec.run_one ~mgr ~sw:() cmd_tmpl e.Eval.path
+                       | None -> ());
+                       Eio.Stream.add results_stream (Some e)
+                     ) entries;
+                     used_daemon := true
+                 | Error msg ->
+                     Printf.eprintf "[Warning] Daemon query failed: %s. Falling back to local search.\n%!" msg
+               ) else (
+                 Printf.eprintf "[Warning] Daemon socket not found. Falling back to local search.\n%!"
+               )
+             );
+
+             if not !used_daemon then (
+               Traversal.traverse cfg root_dir typed_ast (fun entry ->
+                 if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
+                   Eio.Stream.add results_stream (Some entry)
+                 )
                )
              );
              Eio.Stream.add results_stream None
@@ -305,13 +347,27 @@ let check_ghost = Arg.(value & flag & info ["check-ghost"] ~doc:"Detect deleted 
 let reset_config = Arg.(value & flag & info ["reset-config"] ~doc:"Reset configuration file to default.")
 let reset_rules = Arg.(value & flag & info ["reset-rules"] ~doc:"Reset heuristic rules to default.")
 let integrity = Arg.(value & flag & info ["integrity"; "I"] ~doc:"Print the SHA256 hash of this executable for verification.")
+let daemon_mode = Arg.(value & flag & info ["daemon"] ~doc:"Query the running daemon instead of scanning disk. Requires 'quasifind daemon' to be running. Much faster for repeated queries.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 
 (* --- Daemon Command (Experimental) --- *)
-let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
-let daemon_info = Cmd.info "daemon" ~doc:"Start the Quasifind daemon (Experimental)."
+let daemon_info = Cmd.info "daemon" 
+  ~doc:"Start the Quasifind daemon."
+  ~man:[`S "DESCRIPTION";
+        `P "Start a background daemon that maintains a VFS (Virtual File System) in memory for fast queries.";
+        `P "The daemon uses an Adaptive Radix Tree (ART) for efficient path lookups and watches for file system changes in real-time.";
+        `S "FEATURES";
+        `P "- Persistent cache: VFS is saved to ~/.cache/quasifind/daemon.dump on shutdown";
+        `P "- Query-based pruning: Skips irrelevant directories during search";
+        `P "- Hybrid search: Metadata from VFS, content/entropy from disk";
+        `S "USAGE";
+        `P "Start: quasifind daemon &";
+        `P "Query: quasifind . 'name =~ /[.]ml/' --daemon";
+        `P "Stop: pkill -f 'quasifind daemon' or send shutdown via IPC"]
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ help_short))
+let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
+
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 
@@ -335,6 +391,18 @@ let () =
   else if n > 1 && argv.(1) = "history" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v history_info history_t))
+  else if n > 2 && argv.(1) = "daemon" && argv.(2) = "stop" then
+    (* Daemon stop command *)
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+      (match Ipc.Client.shutdown ~sw ~net:env#net with
+      | Ok msg -> Printf.printf "%s\n" msg; exit 0
+      | Error msg -> 
+          if String.length msg > 0 && (String.sub msg 0 (min 7 (String.length msg)) = "Eio.Io " || String.sub msg 0 (min 14 (String.length msg)) = "Unix.Unix_error") then
+            Printf.eprintf "Error: Daemon is not running. Start it with: quasifind daemon\n"
+          else
+            Printf.eprintf "Error: %s\n" msg;
+          exit 1)
   else if n > 1 && argv.(1) = "daemon" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v daemon_info daemon_t))

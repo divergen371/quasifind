@@ -112,7 +112,7 @@ and check_cmp field op value =
   | "entropy" -> check_entropy op value
   | "type" -> check_type op value
   | "size" -> check_size op value
-  | "mtime" -> check_mtime op value
+  | "mtime" | "time" -> check_mtime op value
   | "perm" -> check_perm op value
   | s -> Error (UnknownField s)
 

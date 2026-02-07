@@ -6,6 +6,7 @@ Quasi-find (findもどき)は、型付き DSL を用いてファイルシステ�
 
 - **型付き DSL**: `size > 10MB` や `mtime < 7d` のように、型安全な式で検索条件を記述できます。
 - **高速な走査**: `Eio` を用いた並列走査により、大規模なディレクトリツリーも効率的に検索できます。
+- **デーモンモード**: VFSをメモリ常駐させ、ファイルシステムの変更をリアルタイム追跡。繰り返しクエリが爆速に。
 - **正規表現**: ファイル名やパスに対して PCRE 正規表現 (`=~`) を利用可能です。
 - **直感的な単位**: `KB`, `MB`, `GB` や `s` (秒), `m` (分), `h` (時間), `d` (日) などの単位を直接扱えます。
 
@@ -245,6 +246,43 @@ quasifind --update-rules
 - `--webhook=URL`: イベント発生時に指定URLへPOSTリクエストを送信します。
 - `--email=ADDR`: イベント発生時にメールを送信します（要sendmail）。
 - `--slack=URL`: Slack Incoming Webhook URLへ通知を送信します。
+- `--daemon`: デーモンモードを使用します（下記参照）。
+
+### デーモンモード (Daemon Mode) 🚀 New!
+
+デーモンモードは、VFS (Virtual File System) をメモリ上に常駐させ、ファイルシステムの変更をリアルタイムで追跡することで、**大幅に高速化されたクエリ**を実現します。
+
+#### 起動と使用
+
+```bash
+# デーモンを起動（バックグラウンドで実行）
+quasifind daemon &
+
+# デーモン経由で検索（通常の検索と同じ構文）
+quasifind . 'name =~ /\.ml$/' --daemon
+quasifind . 'content =~ /TODO/' --daemon
+quasifind . 'entropy > 7.5' --daemon
+```
+
+#### 特徴
+
+- **Adaptive Radix Tree (ART)**: 高速なパス検索のための最適化されたツリー構造
+- **Persistent Cache**: シャットダウン時にVFSを `~/.cache/quasifind/daemon.dump` に保存し、再起動時に復元
+- **Hybrid Search**: メタデータ（名前、サイズ、時刻）はVFSから即座に取得し、コンテンツ/エントロピーはディスクにフォールバック
+- **Full Regex Support**: 正規表現クエリもIPC経由で完全にサポート
+
+#### デーモン管理
+
+```bash
+# ステータス確認
+quasifind stats --daemon
+
+# 停止（IPCソケット経由）
+echo '{"type":"shutdown"}' | nc -U ~/.cache/quasifind/daemon.sock
+```
+
+> [!NOTE]
+> デーモンモードは現在 **実験的機能** です。フィードバックをお待ちしています。
 
 ### 正規表現について
 
@@ -333,6 +371,9 @@ dune runtest
 | Interactive           | ユニット + スモーク    | 4              |
 | Stealth               | スモークテスト         | 3              |
 | Watcher               | ユニット + スモーク    | 6              |
+| **ART (Daemon)**      | ユニットテスト         | 5              |
+| **VFS (Daemon)**      | ユニットテスト         | 5              |
+| **IPC (Daemon)**      | ユニットテスト         | 5              |
 | Size/Time Props       | プロパティベーステスト | 2 (2000ケース) |
 
 **注**: **スモークテスト** はシステム依存の関数（`is_available`, `is_atty`, 通知関数など）に対して、クラッシュしないことのみを確認するテストです。実際の戻り値や副作用は検証していません。

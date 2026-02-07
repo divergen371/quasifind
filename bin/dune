@@ -1,4 +1,4 @@
 (executable
  (public_name quasifind)
  (name main)
- (libraries quasifind cmdliner eio_main))
+ (libraries quasifind cmdliner eio_main yojson))
