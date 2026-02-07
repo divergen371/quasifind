@@ -124,7 +124,7 @@ let get_file_hash path =
   ignore (Unix.close_process_in ic);
   hash
 
-let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) () =
+let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_deleted ?log_file ?webhook_url ?email_addr ?slack_url ?heartbeat_url ?(heartbeat_interval=60) ?(shutdown_flag = ref false) () =
   Printf.eprintf "[Watch] Monitoring %s (interval: %.1fs, Ctrl+C to stop)\n%!" root interval;
   
   (* Open log file if specified *)
@@ -163,7 +163,7 @@ let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_
       (match heartbeat_url with
       | Some url ->
           Eio.Fiber.fork ~sw (fun () ->
-            while true do
+            while not !shutdown_flag do
               send_heartbeat url;
               Eio.Time.sleep clock (float_of_int heartbeat_interval)
             done
@@ -172,7 +172,7 @@ let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_
 
       (* Fiber 2: Integrity Check *)
       Eio.Fiber.fork ~sw (fun () ->
-        while true do
+        while not !shutdown_flag do
           Eio.Time.sleep clock (interval *. 5.0); (* Check less frequently than main scan *)
           List.iter (fun path ->
             let current_hash = get_file_hash path in
@@ -218,7 +218,7 @@ let watch_fibers ~sw ~clock ~interval ~root ~cfg ~expr ~on_new ~on_modified ~on_
       (* Fiber 3: File Scanning *)
       Eio.Fiber.fork ~sw (fun () ->
         try
-          while true do
+          while not !shutdown_flag do
             Eio.Time.sleep clock interval;
             let new_state = scan_files config in
             

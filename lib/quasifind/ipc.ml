@@ -214,7 +214,7 @@ let handle_client flow handler =
   with End_of_file -> ()
   | e -> Printf.eprintf "Client disconnected: %s\n%!" (Printexc.to_string e)
 
-let run ~sw ~net handler =
+let run ~sw ~net ~clock ?(shutdown_flag = ref false) handler =
   let path = socket_path () in
   if Sys.file_exists path then Unix.unlink path;
   
@@ -223,11 +223,19 @@ let run ~sw ~net handler =
   
   Printf.printf "IPC Server listening on %s\n%!" path;
   
-  while true do
-    Eio.Net.accept_fork socket ~sw (fun flow _addr ->
-      handle_client flow handler
-    ) ~on_error:(fun ex -> Printf.eprintf "Connection error: %s\n%!" (Printexc.to_string ex))
-  done
+  while not !shutdown_flag do
+    (* Use a timeout to periodically check shutdown flag *)
+    Eio.Fiber.first
+      (fun () ->
+        Eio.Net.accept_fork socket ~sw (fun flow _addr ->
+          handle_client flow handler
+        ) ~on_error:(fun ex -> Printf.eprintf "Connection error: %s\n%!" (Printexc.to_string ex))
+      )
+      (fun () ->
+        Eio.Time.sleep clock 0.5
+      )
+  done;
+  Printf.printf "IPC Server stopped.\n%!"
 
 let json_to_response json =
   let open Yojson.Safe.Util in

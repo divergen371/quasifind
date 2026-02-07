@@ -28,8 +28,7 @@ let run ~root =
       | None -> Vfs.empty
     ) in
     
-    (* Register exit hook (best effort) *)
-    at_exit (fun () -> save_vfs !vfs);
+    (* No at_exit hook - we handle save explicitly in normal exit and exception paths *)
 
     (* Enter Event Loop *)
     try
@@ -73,6 +72,9 @@ let run ~root =
 
     Printf.printf "Daemon running with Watcher (Interval: 2.0s)...\n%!";
 
+    (* Shutdown flag - shared between watcher, IPC and main loop *)
+    let shutdown_requested = ref false in
+
     (* Start Watcher Fibers *)
     Watcher.watch_fibers 
       ~sw 
@@ -82,11 +84,11 @@ let run ~root =
       ~cfg:config 
       ~expr:Ast.Typed.True
       ~on_new ~on_modified ~on_deleted
-      (* Disable notifications for now to avoid spam during dev *)
-      (* ?log_file, ?webhook_url etc can be passed if needed *)
+      ~shutdown_flag:shutdown_requested
       ();
 
     (* Start IPC Server *)
+
     Eio.Fiber.fork ~sw (fun () ->
       let handler request =
         match request with
@@ -94,10 +96,8 @@ let run ~root =
             let count = Vfs.count_nodes !vfs in
             Ipc.Success (`Assoc [("nodes", `Int count)])
         | Ipc.Shutdown ->
-             save_vfs !vfs;
-            Eio.Switch.fail sw (Failure "Shutdown requested via IPC");
-            (* This line might not be reached if fail throws *)
-            Ipc.Success (`String "Shutting down...")
+            shutdown_requested := true;
+            Ipc.Success (`String "Daemon shutting down...")
         | Ipc.Query expr ->
             let start_t = Unix.gettimeofday () in
             (* Snapshot VFS *)
@@ -120,17 +120,19 @@ let run ~root =
             in
             Ipc.Success (`List results)
       in
-      try Ipc.run ~sw ~net:env#net handler
+      try Ipc.run ~sw ~net:env#net ~clock:env#clock ~shutdown_flag:shutdown_requested handler
       with e -> Printf.eprintf "IPC Server Error: %s\n%!" (Printexc.to_string e)
     );
 
     (* Daemon Status Loop *)
-
-    while true do
-      Eio.Time.sleep env#clock 10.0;
-      Printf.printf "Daemon heartbeat (Nodes: %d)\n%!" (Vfs.count_nodes !vfs);
-    done
+    while not !shutdown_requested do
+      Eio.Time.sleep env#clock 2.0;
+      if not !shutdown_requested then
+        Printf.printf "Daemon heartbeat (Nodes: %d)\n%!" (Vfs.count_nodes !vfs);
+    done;
+    
+    Printf.printf "Daemon shutdown complete.\n%!";
+    save_vfs !vfs
     with e -> 
-      save_vfs !vfs;
       Printf.eprintf "Daemon crash/exit: %s\n%!" (Printexc.to_string e);
-      raise e
+      save_vfs !vfs (* Only save on crash, not after normal shutdown *)
