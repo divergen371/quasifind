@@ -20,4 +20,4 @@ val string_of_error : error -> string
     durations (e.g., '1h' to seconds), and pre-compiles any regular expressions.
     
     @return [Ok typed_expr] if the expression is well-typed, or an [Error] with details. *)
-val check : Ast.Untyped.expr -> (Ast.Typed.expr, error) result
+val check : Ast.Untyped.expr -> (Ast.Typed.expr, Qerror.t) result

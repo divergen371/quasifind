@@ -49,10 +49,10 @@ let rules () =
             (match Typecheck.check expr with
              | Ok _ -> Or (acc, expr)
              | Error err ->
-                 Printf.eprintf "Warning: Rule '%s' failed validation (skip): %s\n" r.name (Typecheck.string_of_error err);
+                 Printf.eprintf "Warning: Rule '%s' failed validation (skip): %s\n" r.name (Qerror.to_string err);
                  acc)
         | Error msg -> 
-            Printf.eprintf "Warning: Failed to parse rule '%s': %s\n" r.name msg;
+            Printf.eprintf "Warning: Failed to parse rule '%s': %s\n" r.name (Qerror.to_string msg);
             acc
       ) default_rule rs.rules
   | None -> default_rule

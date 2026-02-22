@@ -2,6 +2,7 @@
  (name quasifind)
  (public_name quasifind)
  (modules
+  qerror
   ast
   parser
   typecheck

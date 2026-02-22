@@ -5,13 +5,13 @@ let test_parse_simple () =
   let input = "true" in
   match Parser.parse input with
   | Ok _ -> ()
-  | Error msg -> fail msg
+  | Error msg -> fail (Qerror.to_string msg)
 
 let test_typecheck_valid () =
   let input = Ast.Untyped.Cmp ("name", Ast.Eq, Ast.Untyped.VString "foo") in
   match Typecheck.check input with
   | Ok _ -> ()
-  | Error e -> fail (Typecheck.string_of_error e)
+  | Error e -> fail (Qerror.to_string e)
 
 let test_typecheck_invalid () =
   let input = Ast.Untyped.Cmp ("size", Ast.Eq, Ast.Untyped.VString "big") in
@@ -36,14 +36,14 @@ let test_parse_complex () =
   let input = "(name == \"*.ml\" && size > 10MB) || type == file" in
   match Parser.parse input with
   | Ok _ -> ()
-  | Error msg -> fail msg
+  | Error msg -> fail (Qerror.to_string msg)
 
 let test_parse_precedence () =
   let input = "true || false && true" in (* Should parse as true || (false && true) *)
   match Parser.parse input with
   | Ok (Ast.Untyped.Or (Ast.Untyped.True, Ast.Untyped.And (Ast.Untyped.False, Ast.Untyped.True))) -> ()
   | Ok e -> fail ("Wrong precedence: " ^ Ast.Untyped.show_expr e)
-  | Error msg -> fail msg
+  | Error msg -> fail (Qerror.to_string msg)
 
 let suite = [
   "Parser", [

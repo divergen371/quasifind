@@ -5,7 +5,7 @@ let test_valid_rule_parsing () =
   let expr_str = "name =~ /\\.php$/ && size > 10KB" in
   match Parser.parse expr_str with
   | Ok _ -> ()
-  | Error msg -> fail ("Failed to parse valid rule: " ^ msg)
+  | Error msg -> fail ("Failed to parse valid rule: " ^ Qerror.to_string msg)
 
 let test_invalid_rule_parsing () =
   let expr_str = "name =~ /unclosed_paren" in
@@ -18,16 +18,16 @@ let test_regex_escaping () =
   let expr_str = "content =~ /eval\\(base64/" in 
   match Parser.parse expr_str with
   | Ok _ -> ()
-  | Error msg -> fail ("Failed to parse escaped regex: " ^ msg)
+  | Error msg -> fail ("Failed to parse 'suspicious' logic: " ^ Qerror.to_string msg)
 
 let test_validation_valid () =
   let valid_ast = match Parser.parse "name =~ /foo/" with
     | Ok ast -> ast
-    | Error e -> fail ("Failed to parse valid AST: " ^ e)
+    | Error msg -> fail ("Failed to parse valid AST: " ^ Qerror.to_string msg)
   in
   match Typecheck.check valid_ast with
   | Ok _ -> ()
-  | Error e -> fail ("Valid AST failed typecheck: " ^ Typecheck.string_of_error e)
+  | Error e -> fail ("Valid AST failed typecheck: " ^ Qerror.to_string e)
 
 let test_validation_invalid () =
   (* Invalid regex in AST *)

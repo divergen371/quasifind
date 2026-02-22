@@ -149,9 +149,9 @@ let expr_p =
     chainl1 and_expr or_op
   )
 
-let parse (s : string) : (Ast.Untyped.expr, string) result =
+let parse (s : string) : (Ast.Untyped.expr, Qerror.t) result =
   match
     parse_string ~consume:Consume.All (ws *> expr_p <* end_of_input) s
   with
   | Ok e -> Ok e
-  | Error msg -> Error msg
+  | Error msg -> Error (Qerror.ParseError msg)

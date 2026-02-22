@@ -188,7 +188,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
              (* Suspicious mode without explicit expr -> use suspicious rules *)
              let untyped_ast = Suspicious.rules () in
              (match Typecheck.check untyped_ast with
-              | Error err -> `Error (false, "Type Error (Suspicious Rules): " ^ Typecheck.string_of_error err)
+              | Error err -> `Error (false, "Type Error (Suspicious Rules): " ^ Qerror.to_string err)
               | Ok typed_ast -> run_logic typed_ast)
 
       | Some expr_str ->
@@ -209,14 +209,14 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            | None -> ());
 
           match Parser.parse expr_str with
-          | Error msg -> `Error (false, "Parse Error: " ^ msg)
+          | Error msg -> `Error (false, "Parse Error: " ^ Qerror.to_string msg)
           | Ok user_ast ->
               let final_ast = 
                 if suspicious_mode then Ast.Untyped.And (user_ast, Suspicious.rules ())
                 else user_ast
               in
               match Typecheck.check final_ast with
-              | Error err -> `Error (false, "Type Error: " ^ Typecheck.string_of_error err)
+              | Error err -> `Error (false, "Type Error: " ^ Qerror.to_string err)
               | Ok typed_ast -> run_logic typed_ast
   )
   )

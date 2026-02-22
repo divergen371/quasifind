@@ -9,4 +9,4 @@
     
     @return [Ok expr] if parsing succeeds, or [Error msg] with details about 
             the syntax error. *)
-val parse : string -> (Ast.Untyped.expr, string) result
+val parse : string -> (Ast.Untyped.expr, Qerror.t) result

@@ -87,8 +87,12 @@ let check_value_perm f = function
   | VInt n -> Ok (Int64.to_int n)
   | v -> Error (TypeMismatch { field = f; expected = "permission (int)"; got = show_value v })
 
-let rec check (expr : Untyped.expr) : (Typed.expr, error) result =
+let rec check (expr : Untyped.expr) : (Typed.expr, Qerror.t) result =
   let open Result in
+  let convert_err = function
+    | Ok v -> Ok v
+    | Error e -> Error (Qerror.TypeError (string_of_error e))
+  in
   match expr with
   | True -> Ok True
   | False -> Ok False
@@ -102,7 +106,7 @@ let rec check (expr : Untyped.expr) : (Typed.expr, error) result =
       check e2 >>= fun e2' ->
       Ok (Or (e1', e2'))
   | Cmp (field, op, value) ->
-      check_cmp field op value
+      check_cmp field op value |> convert_err
 
 and check_cmp field op value =
   match field with
