@@ -310,4 +310,24 @@ module Client = struct
       | exception _ -> Error "Failed to parse daemon response"
     with
     | ex -> Error (Printexc.to_string ex)
+
+  let stats ~sw ~net =
+    try
+      let flow = connect ~sw ~net in
+      let req = Stats in
+      let req_json = request_to_json req in
+      let req_str = Yojson.Safe.to_string req_json ^ "\n" in
+      Eio.Flow.copy_string req_str flow;
+      
+      let buf = Eio.Buf_read.of_flow ~max_size:10_000 flow in
+      let line = Eio.Buf_read.line buf in
+      match Yojson.Safe.from_string line with
+      | json ->
+          (match json_to_response json with
+          | Ok (Success data) -> Ok data
+          | Ok (Failure msg) -> Error msg
+          | Error e -> Error e)
+      | exception _ -> Error "Failed to parse daemon response"
+    with
+    | ex -> Error (Printexc.to_string ex)
 end

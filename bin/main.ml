@@ -403,6 +403,34 @@ let () =
           else
             Printf.eprintf "Error: %s\n" msg;
           exit 1)
+  else if n > 2 && argv.(1) = "daemon" && argv.(2) = "stats" then
+    (* Daemon stats command *)
+    Eio_main.run @@ fun env ->
+    Eio.Switch.run @@ fun sw ->
+      (match Ipc.Client.stats ~sw ~net:env#net with
+      | Ok json ->
+          let open Yojson.Safe.Util in
+          let nodes = json |> member "nodes" |> to_int_option |> Option.value ~default:0 in
+          let root = json |> member "root" |> to_string_option |> Option.value ~default:"?" in
+          let heap_mb = json |> member "heap_mb" |> to_float_option |> Option.value ~default:0.0 in
+          let uptime = json |> member "uptime_sec" |> to_float_option |> Option.value ~default:0.0 in
+          let last_scan = json |> member "last_scan" |> to_float_option |> Option.value ~default:0.0 in
+          let uptime_h = int_of_float (uptime /. 3600.0) in
+          let uptime_m = int_of_float (mod_float (uptime /. 60.0) 60.0) in
+          let uptime_s = int_of_float (mod_float uptime 60.0) in
+          Printf.printf "Quasifind Daemon Status\n";
+          Printf.printf "  Root:       %s\n" root;
+          Printf.printf "  Nodes:      %d\n" nodes;
+          Printf.printf "  Heap:       %.2f MB\n" heap_mb;
+          Printf.printf "  Uptime:     %02d:%02d:%02d\n" uptime_h uptime_m uptime_s;
+          Printf.printf "  Last Scan:  %s\n" (let t = Unix.localtime last_scan in Printf.sprintf "%04d-%02d-%02d %02d:%02d:%02d" (t.tm_year + 1900) (t.tm_mon + 1) t.tm_mday t.tm_hour t.tm_min t.tm_sec);
+          exit 0
+      | Error msg ->
+          if String.length msg > 0 && (String.sub msg 0 (min 7 (String.length msg)) = "Eio.Io " || String.sub msg 0 (min 14 (String.length msg)) = "Unix.Unix_error") then
+            Printf.eprintf "Error: Daemon is not running. Start it with: quasifind daemon\n"
+          else
+            Printf.eprintf "Error: %s\n" msg;
+          exit 1)
   else if n > 1 && argv.(1) = "daemon" then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v daemon_info daemon_t))

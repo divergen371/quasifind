@@ -7,12 +7,16 @@ let run ~root =
   Printf.printf "Starting Quasifind Daemon (Experimental)...\n";
   Printf.printf "Root Scope: %s\n" root;
 
+    let cfg = Config.load () in
     let cache_dir = 
-      let home = try Sys.getenv "HOME" with Not_found -> "/tmp" in
-      let dir = Filename.concat home ".cache" in
-      let qf_dir = Filename.concat dir "quasifind" in
-      if not (Sys.file_exists qf_dir) then Unix.mkdir qf_dir 0o700;
-      qf_dir
+      match cfg.daemon.cache_path with
+      | Some p -> p
+      | None ->
+        let home = try Sys.getenv "HOME" with Not_found -> "/tmp" in
+        let dir = Filename.concat home ".cache" in
+        let qf_dir = Filename.concat dir "quasifind" in
+        if not (Sys.file_exists qf_dir) then Unix.mkdir qf_dir 0o700;
+        qf_dir
     in
     let dump_path = Filename.concat cache_dir "daemon.dump" in
 
@@ -27,8 +31,21 @@ let run ~root =
       | Some t -> Printf.printf "Loaded VFS from cache.\n%!"; t 
       | None -> Vfs.empty
     ) in
-    
-    (* No at_exit hook - we handle save explicitly in normal exit and exception paths *)
+
+    (* Timing refs for stats *)
+    let start_time = Unix.gettimeofday () in
+    let last_scan_time = ref start_time in
+
+    (* Shutdown flag - declared outside Eio_main.run for signal handler access *)
+    let shutdown_requested = ref false in
+
+    (* Graceful Shutdown: Register signal handlers *)
+    Sys.set_signal Sys.sigterm (Sys.Signal_handle (fun _ ->
+      Printf.eprintf "\n[Signal] SIGTERM received, initiating graceful shutdown...\n%!";
+      shutdown_requested := true));
+    Sys.set_signal Sys.sigint (Sys.Signal_handle (fun _ ->
+      Printf.eprintf "\n[Signal] SIGINT received, initiating graceful shutdown...\n%!";
+      shutdown_requested := true));
 
     (* Enter Event Loop *)
     try
@@ -60,26 +77,23 @@ let run ~root =
       max_depth = None;
       follow_symlinks = false; 
       include_hidden = true;
-      ignore = [".git"; "_build"];
+      ignore = cfg.daemon.exclude;
       ignore_re = [];
       preserve_timestamps = false;
       spawn = None;
     } in
 
     Printf.printf "Perform Initial VFS Scan...\n%!";
-    (* We still scan to ensure consistency, but ART insert is fast *)
     Traversal.traverse config root Ast.Typed.True (fun entry -> on_new entry);
+    last_scan_time := Unix.gettimeofday ();
 
-    Printf.printf "Daemon running with Watcher (Interval: 2.0s)...\n%!";
-
-    (* Shutdown flag - shared between watcher, IPC and main loop *)
-    let shutdown_requested = ref false in
+    Printf.printf "Daemon running with Watcher (Interval: %.1fs)...\n%!" cfg.daemon.watch_interval;
 
     (* Start Watcher Fibers *)
     Watcher.watch_fibers 
       ~sw 
       ~clock:env#clock 
-      ~interval:2.0 
+      ~interval:cfg.daemon.watch_interval 
       ~root 
       ~cfg:config 
       ~expr:Ast.Typed.True
@@ -94,23 +108,29 @@ let run ~root =
         match request with
         | Ipc.Stats ->
             let count = Vfs.count_nodes !vfs in
-            Ipc.Success (`Assoc [("nodes", `Int count)])
+            let mem = Gc.stat () in
+            let heap_mb = float_of_int mem.Gc.heap_words *. (float_of_int Sys.word_size /. 8.0) /. 1_048_576.0 in
+            let heap_mb_rounded = Float.round (heap_mb *. 100.0) /. 100.0 in
+            Ipc.Success (`Assoc [
+              ("nodes", `Int count);
+              ("root", `String root);
+              ("heap_mb", `Float heap_mb_rounded);
+              ("uptime_sec", `Float (Unix.gettimeofday () -. start_time));
+              ("last_scan", `Float !last_scan_time);
+            ])
         | Ipc.Shutdown ->
             shutdown_requested := true;
             Ipc.Success (`String "Daemon shutting down...")
         | Ipc.Query expr ->
             let start_t = Unix.gettimeofday () in
-            (* Snapshot VFS *)
             let current_vfs = !vfs in
             let results = 
-              (* Use query-based pruning to skip irrelevant subtrees *)
               Vfs.fold_with_query (fun acc entry ->
-                (* Evaluate entry against query *)
                 if Eval.eval start_t expr entry then
                   let json_entry = `Assoc [
                     ("path", `String entry.Eval.path);
                     ("name", `String entry.Eval.name);
-                    ("size", `Int (Int64.to_int entry.Eval.size)); (* Potential overflow for huge files in JSON *)
+                    ("size", `Int (Int64.to_int entry.Eval.size));
                     ("mtime", `Float entry.Eval.mtime);
                   ] in
                   json_entry :: acc
@@ -135,4 +155,4 @@ let run ~root =
     save_vfs !vfs
     with e -> 
       Printf.eprintf "Daemon crash/exit: %s\n%!" (Printexc.to_string e);
-      save_vfs !vfs (* Only save on crash, not after normal shutdown *)
+      save_vfs !vfs

@@ -29,6 +29,16 @@ type t = {
   heartbeat_url : string option;      (** URL to ping for daemon heartbeat *)
   heartbeat_interval : int;           (** Interval in seconds for heartbeat pings *)
   rule_sources : rule_source_def list;(** Remote sources for suspicious file rules *)
+  daemon : daemon_config;             (** Daemon-specific configuration *)
+}
+[@@deriving show, eq]
+
+(** Configuration specific to the daemon process. *)
+and daemon_config = {
+  watch_interval : float;    (** Interval in seconds between watcher scans (default: 2.0) *)
+  cache_path : string option;(** Custom cache directory (default: ~/.cache/quasifind/) *)
+  roots : string list;       (** Root directories to watch (default: ["."]) *)
+  exclude : string list;     (** Directory patterns to exclude from scanning *)
 }
 [@@deriving show, eq]
 

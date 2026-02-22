@@ -67,4 +67,10 @@ module Client : sig
   val shutdown : 
     sw:Eio.Switch.t -> 
     net:_ Eio.Net.t -> (string, string) result
+
+  (** [stats ~sw ~net] sends a [Stats] request to the daemon.
+      Returns the raw JSON stats data, or an error. *)
+  val stats :
+    sw:Eio.Switch.t ->
+    net:_ Eio.Net.t -> (Yojson.Safe.t, string) result
 end

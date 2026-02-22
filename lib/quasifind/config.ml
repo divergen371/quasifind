@@ -19,7 +19,22 @@ type t = {
   heartbeat_url : string option;
   heartbeat_interval : int;
   rule_sources : rule_source_def list;
+  daemon : daemon_config;
 } [@@deriving show, eq]
+
+and daemon_config = {
+  watch_interval : float;
+  cache_path : string option;
+  roots : string list;
+  exclude : string list;
+} [@@deriving show, eq]
+
+let default_daemon = {
+  watch_interval = 2.0;
+  cache_path = None;
+  roots = ["."];
+  exclude = [".git"; "_build"];
+}
 
 let default = {
   fuzzy_finder = Auto;
@@ -37,11 +52,11 @@ let default = {
     };
     {
       name = "Generated: Common Sensitive Files";
-      (* Using SecLists quickhits for sensitive/config files *)
       url = "https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/quickhits.txt";
       kind = Filenames;
     }
   ];
+  daemon = default_daemon;
 }
 
 let fuzzy_finder_of_string = function
@@ -92,7 +107,17 @@ let t_of_json json =
          )
     with _ -> default.rule_sources
   in
-  { fuzzy_finder; ignore; email; webhook_url; slack_url; heartbeat_url; heartbeat_interval; rule_sources }
+  let daemon =
+    try
+      let dj = Util.member "daemon" json in
+      let watch_interval = try Util.member "watch_interval" dj |> Util.to_float with _ -> default_daemon.watch_interval in
+      let cache_path = try Util.to_option Util.to_string (Util.member "cache_path" dj) with _ -> None in
+      let roots = try Util.member "roots" dj |> Util.to_list |> List.map Util.to_string with _ -> default_daemon.roots in
+      let exclude = try Util.member "exclude" dj |> Util.to_list |> List.map Util.to_string with _ -> default_daemon.exclude in
+      { watch_interval; cache_path; roots; exclude }
+    with _ -> default_daemon
+  in
+  { fuzzy_finder; ignore; email; webhook_url; slack_url; heartbeat_url; heartbeat_interval; rule_sources; daemon }
 
 let get_config_dir () =
   let home = Sys.getenv "HOME" in
@@ -121,6 +146,12 @@ let t_to_json t =
       ("url", `String s.url);
       ("kind", `String (match s.kind with Extensions -> "extensions" | Filenames -> "filenames"));
     ]) t.rule_sources));
+    ("daemon", `Assoc [
+      ("watch_interval", `Float t.daemon.watch_interval);
+      ("cache_path", match t.daemon.cache_path with Some s -> `String s | None -> `Null);
+      ("roots", `List (List.map (fun s -> `String s) t.daemon.roots));
+      ("exclude", `List (List.map (fun s -> `String s) t.daemon.exclude));
+    ]);
   ]
 
 let save_default path =

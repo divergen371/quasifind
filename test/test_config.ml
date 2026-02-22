@@ -11,6 +11,7 @@ let test_config_json_roundtrip () =
     heartbeat_url = Some "http://localhost:8080";
     heartbeat_interval = 30;
     rule_sources = [];
+    daemon = { watch_interval = 2.0; cache_path = None; roots = ["."]; exclude = [".git"; "_build"] };
   } in
   let json = Config.t_to_json config in
   let parsed = Config.t_of_json json in
