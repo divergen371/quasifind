@@ -27,7 +27,8 @@
   ipc
   daemon
   art
-  fsevents)
+  fsevents
+  formatter)
  (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)

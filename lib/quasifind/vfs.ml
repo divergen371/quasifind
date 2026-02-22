@@ -105,15 +105,23 @@ let fold_with_query (f : 'a -> Eval.entry -> 'a) (acc : 'a) (t : t) (expr : Ast.
   ) acc t
 
 (* Serialization *)
+let vfs_version = 20240222 (* Magic number for ART Patricia structure *)
+
 let save (t : t) (path : string) : unit =
   let oc = open_out_bin path in
+  output_binary_int oc vfs_version;
   Marshal.to_channel oc t [];
   close_out oc
 
 let load (path : string) : t option =
   try
     let ic = open_in_bin path in
-    let t = Marshal.from_channel ic in
-    close_in ic;
-    Some t
+    let ver = input_binary_int ic in
+    if ver <> vfs_version then (
+      close_in ic;
+      None
+    ) else
+      let t = Marshal.from_channel ic in
+      close_in ic;
+      Some t
   with _ -> None

@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode =
   if help_short then `Help (`Auto, None)
   else (
   
@@ -45,7 +45,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false false
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -70,6 +70,15 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
         
         let batch_paths = ref [] in
         let all_found_paths = ref [] in
+        let fmt = match Formatter.parse_format output_format with Some f -> f | None -> Formatter.Default in
+        let clr = match Formatter.parse_color color_mode with Some c -> c | None -> Formatter.Auto in
+        let is_first_json = ref true in
+        
+        (* Print header if needed *)
+        (match Formatter.format_header ~format:fmt with
+         | Some h -> Printf.printf "%s\n" h
+         | None -> ());
+        (if fmt = Formatter.Json then Printf.printf "%s\n" (Formatter.format_json_start ()));
         
         (* Thread-safe result collection: Use a Stream with termination signal *)
         let results_stream = Eio.Stream.create 4096 in
@@ -91,8 +100,18 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                    | Some _ -> batch_paths := entry.path :: !batch_paths
                    | None -> ());
                    
-                   if Option.is_none exec_command && Option.is_none exec_batch_command then
-                     Printf.printf "%s\n%!" entry.path;
+                   if Option.is_none exec_command && Option.is_none exec_batch_command then (
+                     let line = Formatter.format_entry ~format:fmt ~color:clr entry in
+                     (match fmt with
+                      | Formatter.Json ->
+                          if !is_first_json then is_first_json := false
+                          else Printf.printf ",\n";
+                          Printf.printf "%s%!" line
+                      | Formatter.Null ->
+                          Printf.printf "%s\000%!" line
+                      | _ ->
+                          Printf.printf "%s\n%!" line)
+                   );
                    loop ()
              in
              loop ()
@@ -120,7 +139,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                
                let socket = Ipc.socket_path () in
                if Sys.file_exists socket then (
-                 Printf.eprintf "[Info] Querying daemon...\r%!";
+                 Printf.eprintf "[Info] Querying daemon...\n%!";
                  match Ipc.Client.query ~sw ~net:env#net typed_ast with
                  | Ok entries ->
                      List.iter (fun e -> 
@@ -147,6 +166,12 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
              );
              Eio.Stream.add results_stream None
           );
+        
+        (* Print JSON footer if needed *)
+        (if fmt = Formatter.Json then (
+          if not !is_first_json then Printf.printf "\n";
+          Printf.printf "%s\n" (Formatter.format_json_end ())
+        ));
         
         (match exec_batch_command with
         | Some cmd_tmpl ->
@@ -349,6 +374,8 @@ let reset_rules = Arg.(value & flag & info ["reset-rules"] ~doc:"Reset heuristic
 let integrity = Arg.(value & flag & info ["integrity"; "I"] ~doc:"Print the SHA256 hash of this executable for verification.")
 let daemon_mode = Arg.(value & flag & info ["daemon"] ~doc:"Query the running daemon instead of scanning disk. Requires 'quasifind daemon' to be running. Much faster for repeated queries.")
 let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
+let output_format = Arg.(value & opt string "default" & info ["format"; "f"] ~docv:"FORMAT" ~doc:"Output format: default, json, csv, table, null.")
+let color_mode = Arg.(value & opt string "auto" & info ["color"] ~docv:"MODE" ~doc:"Color mode: always, auto, never.")
 
 (* --- Daemon Command (Experimental) --- *)
 let daemon_info = Cmd.info "daemon" 
@@ -367,7 +394,7 @@ let daemon_info = Cmd.info "daemon"
 
 let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 

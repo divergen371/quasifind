@@ -267,19 +267,32 @@ module Client = struct
           (match json_to_response json with
           | Ok (Success (`List results)) ->
                (* Convert generic JSON results back to Eval.entry structure *)
-               let entries = List.filter_map (fun item ->
-                 match item with
-                 | `Assoc props ->
-                     let get_str k = List.assoc_opt k props |> Option.map (function `String s -> s | _ -> "") in
-                     let get_float k = List.assoc_opt k props |> Option.map (function `Float f -> f | _ -> 0.0) in
-                     let get_int k = List.assoc_opt k props |> Option.map (function `Int i -> i | _ -> 0) in
-                     
-                     (match get_str "path", get_str "name", get_int "size", get_float "mtime" with
-                     | Some path, Some name, Some size, Some mtime ->
-                         Some { Eval.name; path; kind = Ast.File; size = Int64.of_int size; mtime; perm = 0o644 }
-                     | _ -> None)
-                 | _ -> None
-               ) results in
+                let entries = List.filter_map (fun item ->
+                  match item with
+                  | `Assoc props ->
+                      let get_str k = List.assoc_opt k props |> Option.map (function `String s -> s | _ -> "") in
+                      let get_float k = List.assoc_opt k props |> Option.map (function `Float f -> f | _ -> 0.0) in
+                      let get_int k = List.assoc_opt k props |> Option.map (function `Int i -> i | _ -> 0) in
+                      let get_int64 k = 
+                        match List.assoc_opt k props with
+                        | Some (`Intlit s) -> Some (Int64.of_string s)
+                        | Some (`Int i) -> Some (Int64.of_int i)
+                        | _ -> None
+                      in
+                      let get_kind k =
+                        match List.assoc_opt k props with
+                        | Some (`String "d") -> Some Ast.Dir
+                        | Some (`String "l") -> Some Ast.Symlink
+                        | Some (`String "f") | Some (`String "") | None -> Some Ast.File
+                        | _ -> Some Ast.File
+                      in
+                      
+                      (match get_str "path", get_str "name", get_int64 "size", get_float "mtime", get_kind "type", get_int "perm" with
+                      | Some path, Some name, Some size, Some mtime, Some kind, Some perm ->
+                          Some { Eval.name; path; kind; size; mtime; perm }
+                      | _ -> None)
+                  | _ -> None
+                ) results in
                Ok entries
           | Ok (Success _) -> Error "Unexpected query result format"
           | Ok (Failure msg) -> Error ("Daemon error: " ^ msg)

@@ -57,15 +57,15 @@ let run ~root =
     
     let update_vfs_insert entry =
       let entry_kind = match entry.Eval.kind with Ast.Dir -> `Dir | _ -> `File in
-      Eio.Mutex.use_rw ~protect:true vfs_mutex (fun () ->
+      Eio.Mutex.use_rw vfs_mutex (fun () ->
         vfs := Vfs.insert !vfs entry.Eval.path entry_kind entry.Eval.size entry.Eval.mtime entry.Eval.perm
-      )
+      ) ~protect:true
     in
     
     let update_vfs_remove entry =
-      Eio.Mutex.use_rw ~protect:true vfs_mutex (fun () ->
+      Eio.Mutex.use_rw vfs_mutex (fun () ->
         vfs := Vfs.remove !vfs entry.Eval.path
-      )
+      ) ~protect:true
     in
 
     let on_new entry = update_vfs_insert entry in
@@ -84,7 +84,8 @@ let run ~root =
     } in
 
     Printf.printf "Perform Initial VFS Scan...\n%!";
-    Traversal.traverse config root Ast.Typed.True (fun entry -> on_new entry);
+    let force_metadata_expr = Ast.Typed.Size (Ast.Typed.SizeGe 0L) in
+    Traversal.traverse config root force_metadata_expr (fun entry -> on_new entry);
     last_scan_time := Unix.gettimeofday ();
 
     Printf.printf "Daemon running with Watcher (Interval: %.1fs)...\n%!" cfg.daemon.watch_interval;
@@ -130,8 +131,10 @@ let run ~root =
                   let json_entry = `Assoc [
                     ("path", `String entry.Eval.path);
                     ("name", `String entry.Eval.name);
-                    ("size", `Int (Int64.to_int entry.Eval.size));
+                    ("size", `Intlit (Int64.to_string entry.Eval.size));
+                    ("type", `String (match entry.Eval.kind with Ast.Dir -> "d" | Ast.Symlink -> "l" | _ -> "f"));
                     ("mtime", `Float entry.Eval.mtime);
+                    ("perm", `Int entry.Eval.perm);
                   ] in
                   json_entry :: acc
                 else 
