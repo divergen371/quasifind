@@ -122,3 +122,68 @@ CAMLprim value caml_search_regex(value v_path, value v_pattern)
 
     CAMLreturn(Val_int(ret));
 }
+
+/*
+   caml_search_memmem(v_path, v_needle)
+
+   Fast literal string search using mmap + memmem.
+   memmem on macOS/glibc uses SIMD-optimized routines internally.
+
+   Returns:
+     1 (true)  if needle is found in file content
+     0 (false) if needle is not found
+    -1 (error) if something went wrong
+*/
+CAMLprim value caml_search_memmem(value v_path, value v_needle)
+{
+    CAMLparam2(v_path, v_needle);
+    const char *path = String_val(v_path);
+    const char *needle = String_val(v_needle);
+    mlsize_t needle_len = caml_string_length(v_needle);
+
+    if (needle_len == 0)
+    {
+        /* Empty needle matches everything */
+        CAMLreturn(Val_int(1));
+    }
+
+    /* 1. Open File */
+    int fd = open(path, O_RDONLY);
+    if (fd == -1)
+    {
+        CAMLreturn(Val_int(-1));
+    }
+
+    /* 2. Get file size */
+    struct stat st;
+    if (fstat(fd, &st) == -1 || st.st_size == 0)
+    {
+        close(fd);
+        CAMLreturn(Val_int(st.st_size == 0 ? 0 : -1));
+    }
+
+    /* Skip files larger than 256MB to avoid excessive memory mapping */
+    if (st.st_size > 256 * 1024 * 1024)
+    {
+        close(fd);
+        CAMLreturn(Val_int(-1));
+    }
+
+    /* 3. Mmap */
+    void *addr = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (addr == MAP_FAILED)
+    {
+        close(fd);
+        CAMLreturn(Val_int(-1));
+    }
+
+    /* 4. Search with memmem - SIMD optimized on modern libc */
+    void *found = memmem(addr, st.st_size, needle, needle_len);
+    int ret = (found != NULL) ? 1 : 0;
+
+    /* 5. Cleanup */
+    munmap(addr, st.st_size);
+    close(fd);
+
+    CAMLreturn(Val_int(ret));
+}

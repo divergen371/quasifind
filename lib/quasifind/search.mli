@@ -12,5 +12,9 @@ type search_result =
                  so the caller should fall back to OCaml's Re module. *)
 
 (** [regex path pattern] opens the file at [path] and searches for [pattern]
-    using an optimized C stub. *)
+    using an optimized C stub with mmap + POSIX regex. *)
 val regex : string -> string -> search_result
+
+(** [memmem path needle] opens the file at [path] and searches for the literal
+    string [needle] using mmap + memmem (SIMD-optimized on modern libc). *)
+val memmem : string -> string -> search_result

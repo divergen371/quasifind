@@ -15,9 +15,10 @@ type 'a children =
   | Small of (string * 'a t) list
   | Large of 'a t PathMap.t
 
-(** The type representing the Radix Tree. 
+(** The type representing the Radix Tree with Patricia Trie compression.
     ['a] is the type of the value stored at the leaf nodes. *)
 and 'a t = {
+  prefix : string list; (** Compressed path segments for single-child chains *)
   value : 'a option;
   children : 'a children;
 }

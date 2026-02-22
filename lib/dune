@@ -26,11 +26,14 @@
   vfs
   ipc
   daemon
-  art)
+  art
+  fsevents)
  (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)
-  (names stealth_stubs dirent_stubs search_stubs))
+  (names stealth_stubs dirent_stubs search_stubs fsevents_stubs))
+ (c_library_flags
+  (-framework CoreServices))
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))
 

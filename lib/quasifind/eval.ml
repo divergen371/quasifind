@@ -48,25 +48,38 @@ let read_file_content path preserve =
   with_timestamp_preservation path preserve read
 
 let check_content path preserve op =
-  (* Fast path: Try mmap+regex if possible *)
   match op with
+  (* Fast path: literal string search via mmap+memmem (SIMD-optimized) *)
+  | StrEq target ->
+      with_timestamp_preservation path preserve (fun () ->
+        match Search.memmem path target with
+        | Search.Match -> true
+        | Search.NoMatch -> false
+        | Search.Fallback ->
+            (* Fallback to read+compare *)
+            match read_file_content path false with
+            | Some content -> String.equal content target
+            | None -> false)
+  | StrNe target ->
+      with_timestamp_preservation path preserve (fun () ->
+        match Search.memmem path target with
+        | Search.Match -> false
+        | Search.NoMatch -> true
+        | Search.Fallback ->
+            match read_file_content path false with
+            | Some content -> not (String.equal content target)
+            | None -> true)
+  (* Fast path: Try mmap+regex if possible *)
   | StrRe (pattern, re) ->
       with_timestamp_preservation path preserve (fun () ->
         match Search.regex path pattern with
         | Search.Match -> true
         | Search.NoMatch -> false
         | Search.Fallback -> 
-            (* Fallback to slow path *)
-            (match read_file_content path false with (* timestamps already handled by wrapper *)
+            (match read_file_content path false with
              | Some content -> Re.execp re content
              | None -> false)
       )
-  | _ ->
-      (* For non-regex (string) ops, we could also optimize with memmem later.
-         For now, use read_file_content. *)
-      match read_file_content path preserve with
-      | Some content -> check_string op content
-      | None -> false
 
 let calculate_entropy content =
   let len = String.length content in
