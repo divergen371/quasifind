@@ -77,78 +77,32 @@ let count_nodes t = Art.count_nodes t
 (* `Art.ml` types are visible. *)
 
 let fold (f : 'a -> Eval.entry -> 'a) (acc : 'a) (t : t) : 'a =
-  let rec traverse acc path_prefix node =
-    let acc = 
-      match node.Art.value with
-      | None -> acc
-      | Some entry ->
-          let full_path = 
-            if path_prefix = "" then "." 
-            else path_prefix 
-          in
-          let eval_entry = {
-            Eval.name = Filename.basename full_path;
-            path = full_path;
-            kind = entry.kind;
-            size = entry.inode.size;
-            mtime = entry.inode.mtime;
-            perm = entry.inode.perm;
-          } in
-          f acc eval_entry
-    in
-    match node.Art.children with
-    | Art.Small list ->
-        List.fold_left (fun acc (key, child) ->
-          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
-          traverse acc child_path child
-        ) acc list
-    | Art.Large map ->
-        Art.PathMap.fold (fun key child acc ->
-          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
-          traverse acc child_path child
-        ) map acc
-  in
-  traverse acc "" t
+  Art.fold_path (fun acc full_path entry ->
+    let eval_entry = {
+      Eval.name = Filename.basename full_path;
+      path = full_path;
+      kind = entry.kind;
+      size = entry.inode.size;
+      mtime = entry.inode.mtime;
+      perm = entry.inode.perm;
+    } in
+    f acc eval_entry
+  ) acc t
 
 (* Optimized fold with query-based pruning *)
 let fold_with_query (f : 'a -> Eval.entry -> 'a) (acc : 'a) (t : t) (expr : Ast.Typed.expr) : 'a =
-  let rec traverse acc path_prefix node =
-    (* Check if we can prune this subtree *)
-    if path_prefix <> "" && Eval.can_prune_path path_prefix expr then
-      acc (* Skip this entire subtree *)
-    else begin
-      let acc = 
-        match node.Art.value with
-        | None -> acc
-        | Some entry ->
-            let full_path = 
-              if path_prefix = "" then "." 
-              else path_prefix 
-            in
-            let eval_entry = {
-              Eval.name = Filename.basename full_path;
-              path = full_path;
-              kind = entry.kind;
-              size = entry.inode.size;
-              mtime = entry.inode.mtime;
-              perm = entry.inode.perm;
-            } in
-            f acc eval_entry
-      in
-      match node.Art.children with
-      | Art.Small list ->
-          List.fold_left (fun acc (key, child) ->
-            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
-            traverse acc child_path child
-          ) acc list
-      | Art.Large map ->
-          Art.PathMap.fold (fun key child acc ->
-            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
-            traverse acc child_path child
-          ) map acc
-    end
-  in
-  traverse acc "" t
+  let can_prune path = Eval.can_prune_path path expr in
+  Art.fold_with_prune can_prune (fun acc full_path entry ->
+    let eval_entry = {
+      Eval.name = Filename.basename full_path;
+      path = full_path;
+      kind = entry.kind;
+      size = entry.inode.size;
+      mtime = entry.inode.mtime;
+      perm = entry.inode.perm;
+    } in
+    f acc eval_entry
+  ) acc t
 
 (* Serialization *)
 let save (t : t) (path : string) : unit =

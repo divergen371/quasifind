@@ -98,12 +98,65 @@ let rec remove node path_parts =
           else
             { node with children = add_child part new_child node.children }
 
-(* Fold *)
+(* Fold without path *)
 let rec fold f acc node =
   let acc = match node.value with Some v -> f acc v | None -> acc in
   match node.children with
   | Small list -> List.fold_left (fun acc (_, child) -> fold f acc child) acc list
   | Large map -> PathMap.fold (fun _ child acc -> fold f acc child) map acc
 
+(* Fold with path parameter *)
+let fold_path (f : 'acc -> string -> 'a -> 'acc) (acc : 'acc) (t : 'a t) : 'acc =
+  let rec traverse acc path_prefix node =
+    let acc = 
+      match node.value with
+      | None -> acc
+      | Some v ->
+          let full_path = if path_prefix = "" then "." else path_prefix in
+          f acc full_path v
+    in
+    match node.children with
+    | Small list ->
+        List.fold_left (fun acc (key, child) ->
+          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+          traverse acc child_path child
+        ) acc list
+    | Large map ->
+        PathMap.fold (fun key child acc ->
+          let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+          traverse acc child_path child
+        ) map acc
+  in
+  traverse acc "" t
+
 let count_nodes node = fold (fun acc _ -> acc + 1) 0 node
+
+(* We'll expose node types to Vfs just for advanced pruning, or implement prune here.
+   Given Vfs needs `Eval.can_prune_path`, we can expose an advanced `prune_fold`. *)
+let fold_with_prune (can_prune : string -> bool) (f : 'acc -> string -> 'a -> 'acc) (acc : 'acc) (t : 'a t) : 'acc =
+  let rec traverse acc path_prefix node =
+    if path_prefix <> "" && can_prune path_prefix then
+      acc
+    else begin
+      let acc = 
+        match node.value with
+        | None -> acc
+        | Some v ->
+            let full_path = if path_prefix = "" then "." else path_prefix in
+            f acc full_path v
+      in
+      match node.children with
+      | Small list ->
+          List.fold_left (fun acc (key, child) ->
+            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+            traverse acc child_path child
+          ) acc list
+      | Large map ->
+          PathMap.fold (fun key child acc ->
+            let child_path = if path_prefix = "" then key else Filename.concat path_prefix key in
+            traverse acc child_path child
+          ) map acc
+    end
+  in
+  traverse acc "" t
 

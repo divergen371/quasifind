@@ -60,20 +60,20 @@
 - [x] 検索クエリを受け取り、Trie を探索して返すロジック (Vfs.fold + Eval.eval)
 - [x] CLI への統合 (`quasifind search --daemon` command)
 
-### Phase 4: Advanced Search & Optimization
+### Phase 4: Advanced Search & Optimization - Completed
 
-- [ ] **Full Regex Support**: IPCプロトコルで正規表現パターンを転送し、サーバー側でコンパイル・実行できるようにする。
-- [ ] **Adaptive Radix Tree (ART)**: `vfs.ml` の `Map` ベースの Trie を ART (Adaptive Radix Tree) に置き換え、メモリ効率とキャッシュ局所性を向上させる。
-- [ ] **Hybrid Search (Content/Entropy)**:
+- [x] **Full Regex Support**: IPCプロトコルで正規表現パターンを転送し、サーバー側でコンパイル・実行できるようにする。
+- [x] **Adaptive Radix Tree (ART)**: `vfs.ml` の `Map` ベースの Trie を ART (Adaptive Radix Tree) に置き換え、メモリ効率とキャッシュ局所性を向上させる。
+- [x] **Hybrid Search (Content/Entropy)**:
   - メモリ上のVFSでパス・メタデータによる高速フィルタリングを行う。
   - 候補ファイルに対してのみ、サーバー側（またはクライアント側？）でディスク読み込みを行い、Content/Entropy判定を行う。
-- [ ] **Persistent Cache (Fast Restart)**:
+- [x] **Persistent Cache (Fast Restart)**:
   - 終了時にVFS（または対象ディレクトリのメタデータ）をディスクにシリアライズ保存。
   - 次回起動時にロードし、起動停止中の変更分を `Watcher` (または `mtime` チェック) で差分更新して高速起動。
 
-### Phase 5: CLI & UX Refinement
+### Phase 5: CLI & UX Refinement - Completed
 
-- [ ] **CLI Option Cleanup**:
+- [x] **CLI Option Cleanup**:
   - `follow_symlinks` や `include_hidden` など、デーモン起動時に決定されるオプションと、クエリ時に指定可能なオプションを整理。
   - 無効なオプションが指定された場合に警告またはエラーを表示。
   - `--exec` 等のクライアント側での実行サポート。
