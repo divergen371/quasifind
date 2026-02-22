@@ -24,7 +24,7 @@
 
 (test
  (name test_props)
- (libraries quasifind qcheck qcheck-alcotest))
+ (libraries quasifind qcheck-core qcheck-alcotest))
 
 (test
  (name test_suspicious)
@@ -73,3 +73,7 @@
 (test
  (name test_ipc)
  (libraries quasifind alcotest yojson))
+
+(test
+ (name test_qerror)
+ (libraries quasifind alcotest str))
