@@ -14,6 +14,10 @@ type entry = {
   perm : int;            (** File permissions *)
 }
 
+(** [optimize expr] applies constant folding to the AST expression.
+    Evaluates True/False branches early to prune the AST before execution. *)
+val optimize : Ast.Typed.expr -> Ast.Typed.expr
+
 (** [eval ~preserve_timestamps now expr entry] evaluates the AST [expr] 
     against the given file [entry].
     

@@ -115,6 +115,7 @@ let test_ipc_response_success () =
   match Ipc.json_to_response json with
   | Ok (Ipc.Success _) -> ()
   | Ok (Ipc.Failure _) -> fail "Got Failure instead of Success"
+  | Ok (Ipc.Stream _) -> fail "Got Stream instead of Success"
   | Error msg -> fail msg
 
 let test_ipc_response_failure () =
@@ -123,6 +124,7 @@ let test_ipc_response_failure () =
   match Ipc.json_to_response json with
   | Ok (Ipc.Failure msg) -> check string "error msg" "something went wrong" msg
   | Ok (Ipc.Success _) -> fail "Got Success instead of Failure"
+  | Ok (Ipc.Stream _) -> fail "Got Stream instead of Failure"
   | Error msg -> fail msg
 
 (* === Error / invalid input tests === *)

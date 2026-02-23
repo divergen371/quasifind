@@ -14,6 +14,7 @@ type request =
 type response = 
   | Success of Yojson.Safe.t (** A successful response payload in JSON format *)
   | Failure of string        (** An error message if the request failed *)
+  | Stream of ((string -> unit) -> unit) (** A streaming response that takes a string writer callback *)
 
 (** [socket_path ()] returns the Unix domain socket path used for IPC. *)
 val socket_path : unit -> string

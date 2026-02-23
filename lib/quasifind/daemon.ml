@@ -72,13 +72,16 @@ let run ~root =
     let on_modified entry = update_vfs_insert entry in
     let on_deleted entry = update_vfs_remove entry in
 
+    let ignore_patterns = cfg.daemon.exclude in
+    let ignore_re = List.map (fun p -> Re.Glob.glob p |> Re.compile) ignore_patterns in
+
     let config : Traversal.config = {
       strategy = Parallel (Domain.recommended_domain_count ());
       max_depth = None;
       follow_symlinks = false; 
-      include_hidden = true;
-      ignore = cfg.daemon.exclude;
-      ignore_re = [];
+      include_hidden = false;
+      ignore = ignore_patterns;
+      ignore_re = ignore_re;
       preserve_timestamps = false;
       spawn = None;
     } in
@@ -125,23 +128,31 @@ let run ~root =
         | Ipc.Query expr ->
             let start_t = Unix.gettimeofday () in
             let current_vfs = !vfs in
-            let results = 
-              Vfs.fold_with_query (fun acc entry ->
-                if Eval.eval start_t expr entry then
-                  let json_entry = `Assoc [
-                    ("path", `String entry.Eval.path);
-                    ("name", `String entry.Eval.name);
-                    ("size", `Intlit (Int64.to_string entry.Eval.size));
-                    ("type", `String (match entry.Eval.kind with Ast.Dir -> "d" | Ast.Symlink -> "l" | _ -> "f"));
-                    ("mtime", `Float entry.Eval.mtime);
-                    ("perm", `Int entry.Eval.perm);
-                  ] in
-                  json_entry :: acc
-                else 
-                  acc
-              ) [] current_vfs expr
-            in
-            Ipc.Success (`List results)
+            Ipc.Stream (fun write_chunk ->
+              let buf = Buffer.create 65536 in
+              let flush_buffer () =
+                if Buffer.length buf > 0 then begin
+                  write_chunk (Buffer.contents buf);
+                  Buffer.clear buf
+                end
+              in
+              Vfs.fold_with_query (fun () entry ->
+                if Eval.eval start_t expr entry then begin
+                  let kind_str = match entry.Eval.kind with Ast.Dir -> "d" | Ast.Symlink -> "l" | _ -> "f" in
+                  Printf.bprintf buf "%s\t%s\t%Ld\t%f\t%s\t%d\n"
+                    entry.Eval.path
+                    entry.Eval.name
+                    entry.Eval.size
+                    entry.Eval.mtime
+                    kind_str
+                    entry.Eval.perm;
+                  if Buffer.length buf >= 65536 then flush_buffer ()
+                end
+              ) () current_vfs expr;
+              flush_buffer ();
+              (* Signal end of stream *)
+              write_chunk "===END===\n"
+            )
       in
       try Ipc.run ~sw ~net:env#net ~clock:env#clock ~shutdown_flag:shutdown_requested handler
       with e -> Printf.eprintf "IPC Server Error: %s\n%!" (Printexc.to_string e)

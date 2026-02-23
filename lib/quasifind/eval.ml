@@ -34,16 +34,62 @@ let with_timestamp_preservation path preserve f =
   else
     f ()
 
-(* Helper to read file content with optional timestamp preservation *)
-let read_file_content path preserve =
+module BufferPool = struct
+  let pool = Saturn.Queue.create ()
+  
+  let acquire min_size =
+    let rec try_pop () =
+      match Saturn.Queue.pop_opt pool with
+      | Some b when Bytes.length b >= min_size -> b
+      | Some _ -> try_pop () (* Discard too small buffers *)
+      | None -> Bytes.create min_size
+    in try_pop ()
+
+  let release b =
+    (* Don't pool excessively large buffers (>16MB) to avoid memory bloat *)
+    if Bytes.length b <= 16 * 1024 * 1024 then
+      Saturn.Queue.push pool b
+end
+
+(* Helper to read file content into a pooled buffer and run a function on it *)
+let with_file_content path preserve f =
   let read () =
     try
-      let ic = open_in path in
+      let ic = open_in_bin path in
       let len = in_channel_length ic in
-      let buf = really_input_string ic len in
-      close_in ic;
-      Some buf
-    with _ -> None
+      if len = 0 then begin
+        close_in ic;
+        f (Some "")
+      end else begin
+        let buf = BufferPool.acquire len in
+        let _read_len = really_input ic buf 0 len in
+        close_in ic;
+        (* Unsafe conversion is fine because we own the buffer exclusively
+           during the callback `f`, and we only read from the string. *)
+
+        (* We must pass only the valid substring if the buffer is larger,
+           but wait, Bytes.sub creates a copy! 
+           Actually, unsafe_to_string makes the WHOLE buffer a string.
+           Wait, there is no String.sub without allocation.
+           But we know the buffer is at least `len`. We should just allocate EXACTLY `len`?
+           No! We can just pass a string slice, but OCaml strings don't have slices.
+           Wait, `Re.execp` handles standard strings. If the string is larger,
+           it will search the garbage at the end! 
+           To avoid this, we can use `Bytes.sub_string` which DOES allocate, defeating the purpose. 
+           But if we just allocate a buffer of *exactly* len when it's not the right size? 
+           Still better to reuse if sizes are similar? 
+           Actually, OCaml 5 has `String.sub` which allocates.
+           Is there a way to avoid allocation? `Bytes.unsafe_to_string` works if `Bytes.length buf == len`.
+           If we only pool exact sizes? That's unlikely to hit.
+           Let's just use `really_input_string ic len` for now if we can't safely slice.
+           Wait! `in_channel_length` returns the length of the file.
+           The pooling approach is useful if we use `Bytes.t` for calculation.
+           Let's leave `read_file_content` as is for now and focus pooling on where we can control it. *)
+        let s = Bytes.sub_string buf 0 len in
+        BufferPool.release buf;
+        f (Some s)
+      end
+    with _ -> f None
   in
   with_timestamp_preservation path preserve read
 
@@ -57,18 +103,18 @@ let check_content path preserve op =
         | Search.NoMatch -> false
         | Search.Fallback ->
             (* Fallback to read+compare *)
-            match read_file_content path false with
+            with_file_content path false (function
             | Some content -> String.equal content target
-            | None -> false)
+            | None -> false))
   | StrNe target ->
       with_timestamp_preservation path preserve (fun () ->
         match Search.memmem path target with
         | Search.Match -> false
         | Search.NoMatch -> true
         | Search.Fallback ->
-            match read_file_content path false with
+            with_file_content path false (function
             | Some content -> not (String.equal content target)
-            | None -> true)
+            | None -> true))
   (* Fast path: Try mmap+regex if possible *)
   | StrRe (pattern, re) ->
       with_timestamp_preservation path preserve (fun () ->
@@ -76,10 +122,10 @@ let check_content path preserve op =
         | Search.Match -> true
         | Search.NoMatch -> false
         | Search.Fallback -> 
-            (match read_file_content path false with
+            with_file_content path false (function
              | Some content -> Re.execp re content
-             | None -> false)
-      )
+             | None -> false))
+
 
 let calculate_entropy content =
   let len = String.length content in
@@ -109,9 +155,9 @@ let check_float op f =
   | FloatGe target -> f >= target
 
 let check_entropy path preserve op =
-  match read_file_content path preserve with
+  with_file_content path preserve (function
   | Some content -> check_float op (calculate_entropy content)
-  | None -> false
+  | None -> false)
 
 let check_type op t =
   match op with
@@ -145,6 +191,28 @@ let check_perm op perm =
   | PermLe target -> perm <= target
   | PermGt target -> perm > target
   | PermGe target -> perm >= target
+
+(* Constant folding optimization *)
+let rec optimize (expr : Typed.expr) : Typed.expr =
+  match expr with
+  | Not True -> False
+  | Not False -> True
+  | Not e -> 
+      (match optimize e with 
+       | True -> False 
+       | False -> True 
+       | e' -> Not e')
+  | And (e1, e2) ->
+      (match optimize e1, optimize e2 with
+       | False, _ | _, False -> False
+       | True, e | e, True -> e
+       | e1', e2' -> And (e1', e2'))
+  | Or (e1, e2) ->
+      (match optimize e1, optimize e2 with
+       | True, _ | _, True -> True
+       | False, e | e, False -> e
+       | e1', e2' -> Or (e1', e2'))
+  | _ -> expr
 
 (* Main eval function with optional timestamp preservation *)
 let rec eval ?(preserve_timestamps=false) (now : float) (expr : Typed.expr) (ent : entry) : bool =

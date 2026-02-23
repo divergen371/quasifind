@@ -133,14 +133,24 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
                if follow_symlinks then
                  Printf.eprintf "[Warning] -L/--follow is ignored in daemon mode\n%!";
                if include_hidden then
-                 Printf.eprintf "[Warning] -H/--hidden is always enabled in daemon mode\n%!";
+                 Printf.eprintf "[Info] --hidden enabled. Fetching hidden records from daemon.\n%!"
+               else
+                 Printf.eprintf "[Info] Hiding dotfiles from daemon results (--hidden not supplied).\n%!";
                if exclude <> [] then
                  Printf.eprintf "[Warning] -E/--exclude is ignored in daemon mode (use daemon config)\n%!";
                
                let socket = Ipc.socket_path () in
                if Sys.file_exists socket then (
                  Printf.eprintf "[Info] Querying daemon...\n%!";
-                 match Ipc.Client.query ~sw ~net:env#net typed_ast with
+                 
+                 let daemon_ast = 
+                   if include_hidden then typed_ast
+                   else
+                     let hidden_re = Re.compile (Re.Pcre.re "(^|/)\\.") in
+                     Ast.Typed.And (Ast.Typed.Not (Ast.Typed.Path (Ast.Typed.StrRe ("(^|/)\\.", hidden_re))), typed_ast)
+                 in
+
+                 match Ipc.Client.query ~sw ~net:env#net daemon_ast with
                  | Ok entries ->
                      List.iter (fun e -> 
                        (* Support --exec in daemon client mode *)
@@ -458,7 +468,7 @@ let () =
           else
             Printf.eprintf "Error: %s\n" msg;
           exit 1)
-  else if n > 1 && argv.(1) = "daemon" then
+  else if n > 1 && (argv.(1) = "daemon" || argv.(1) = "--daemon") then
     let new_argv = Array.init (n - 1) (fun i -> if i = 0 then argv.(0) else argv.(i+1)) in
     exit (Cmd.eval ~argv:new_argv (Cmd.v daemon_info daemon_t))
   else if n > 1 && argv.(1) = "search" then

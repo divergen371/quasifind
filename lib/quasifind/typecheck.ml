@@ -52,7 +52,7 @@ let normalize_dur n unit =
   Int64.mul n m |> Int64.to_float
 
 let compile_regex s : (Re.re, error) result =
-  try Ok (Re.compile (Re.Pcre.re s))
+  try Ok (Regex_cache.compile s)
   with Re.Pcre.Parse_error | Failure _ -> Error (RegexError s)
 
 let check_value_string f = function
@@ -87,7 +87,7 @@ let check_value_perm f = function
   | VInt n -> Ok (Int64.to_int n)
   | v -> Error (TypeMismatch { field = f; expected = "permission (int)"; got = show_value v })
 
-let rec check (expr : Untyped.expr) : (Typed.expr, Qerror.t) result =
+let rec check_expr (expr : Untyped.expr) : (Typed.expr, Qerror.t) result =
   let open Result in
   let convert_err = function
     | Ok v -> Ok v
@@ -96,14 +96,14 @@ let rec check (expr : Untyped.expr) : (Typed.expr, Qerror.t) result =
   match expr with
   | True -> Ok True
   | False -> Ok False
-  | Not e -> check e |> map (fun e' -> Not e')
+  | Not e -> check_expr e |> map (fun e' -> Not e')
   | And (e1, e2) ->
-      check e1 >>= fun e1' ->
-      check e2 >>= fun e2' ->
+      check_expr e1 >>= fun e1' ->
+      check_expr e2 >>= fun e2' ->
       Ok (And (e1', e2'))
   | Or (e1, e2) ->
-      check e1 >>= fun e1' ->
-      check e2 >>= fun e2' ->
+      check_expr e1 >>= fun e1' ->
+      check_expr e2 >>= fun e2' ->
       Ok (Or (e1', e2'))
   | Cmp (field, op, value) ->
       check_cmp field op value |> convert_err
@@ -206,3 +206,6 @@ and check_perm op value =
   match op with
   | RegexMatch -> Error (InvalidOp { field = "perm"; op; reason = "regex not supported" })
   | _ -> check_value_perm "perm" value |> Result.map mk_perm
+
+let check (expr : Untyped.expr) : (Typed.expr, Qerror.t) result =
+  Result.map Eval.optimize (check_expr expr)

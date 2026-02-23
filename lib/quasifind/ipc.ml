@@ -8,6 +8,7 @@ type request =
 type response = 
   | Success of Yojson.Safe.t
   | Failure of string
+  | Stream of ((string -> unit) -> unit)
 
 let socket_path () =
   let xdg_runtime = try Sys.getenv "XDG_RUNTIME_DIR" with Not_found -> 
@@ -78,7 +79,7 @@ let rec json_to_expr (json : Yojson.Safe.t) : Ast.Typed.expr option =
   let open Ast.Typed in
   
   let compile_re s = 
-    try Ok (Re.compile (Re.Pcre.re s)) 
+    try Ok (Regex_cache.compile s) 
     with _ -> Error "Regex compilation failed"
   in
 
@@ -192,6 +193,7 @@ let request_to_json = function
 let response_to_json = function
   | Success data -> `Assoc [("status", `String "ok"); ("data", data)]
   | Failure msg -> `Assoc [("status", `String "error"); ("message", `String msg)]
+  | Stream _ -> `Assoc [("status", `String "stream_start")] (* Handled manually *)
 
 let handle_client flow handler =
   try
@@ -205,9 +207,17 @@ let handle_client flow handler =
             | Ok req -> handler req
             | Error msg -> Failure msg
           in
-          let resp_json = response_to_json response in
-          let resp_str = Yojson.Safe.to_string resp_json ^ "\n" in
-          Eio.Flow.copy_string resp_str flow
+           (match response with
+           | Stream f -> 
+               (* Send stream start signal without waiting for response *)
+                 Eio.Flow.copy_string "{\"status\":\"stream_start\"}\n" flow;
+                 (* Yield control to f to handle its own custom streaming protocol *)
+                 let write_chunk s = Eio.Flow.copy_string s flow in
+                 f write_chunk
+           | _ ->
+               let resp_json = response_to_json response in
+               let resp_str = Yojson.Safe.to_string resp_json ^ "\n" in
+               Eio.Flow.copy_string resp_str flow)
       | exception _ -> 
           Eio.Flow.copy_string (Yojson.Safe.to_string (response_to_json (Failure "Invalid JSON")) ^ "\n") flow
     done
@@ -260,43 +270,46 @@ module Client = struct
       let req_str = Yojson.Safe.to_string req_json ^ "\n" in
       Eio.Flow.copy_string req_str flow;
       
-      let buf = Eio.Buf_read.of_flow ~max_size:10_000_000 flow in (* 10MB response limit for now *)
-      let line = Eio.Buf_read.line buf in
-      match Yojson.Safe.from_string line with
+      let buf = Eio.Buf_read.of_flow ~max_size:65536 flow in
+      let first_line = Eio.Buf_read.line buf in
+      match Yojson.Safe.from_string first_line with
       | json ->
-          (match json_to_response json with
-          | Ok (Success (`List results)) ->
-               (* Convert generic JSON results back to Eval.entry structure *)
-                let entries = List.filter_map (fun item ->
-                  match item with
-                  | `Assoc props ->
-                      let get_str k = List.assoc_opt k props |> Option.map (function `String s -> s | _ -> "") in
-                      let get_float k = List.assoc_opt k props |> Option.map (function `Float f -> f | _ -> 0.0) in
-                      let get_int k = List.assoc_opt k props |> Option.map (function `Int i -> i | _ -> 0) in
-                      let get_int64 k = 
-                        match List.assoc_opt k props with
-                        | Some (`Intlit s) -> Some (Int64.of_string s)
-                        | Some (`Int i) -> Some (Int64.of_int i)
-                        | _ -> None
-                      in
-                      let get_kind k =
-                        match List.assoc_opt k props with
-                        | Some (`String "d") -> Some Ast.Dir
-                        | Some (`String "l") -> Some Ast.Symlink
-                        | Some (`String "f") | Some (`String "") | None -> Some Ast.File
-                        | _ -> Some Ast.File
-                      in
-                      
-                      (match get_str "path", get_str "name", get_int64 "size", get_float "mtime", get_kind "type", get_int "perm" with
-                      | Some path, Some name, Some size, Some mtime, Some kind, Some perm ->
-                          Some { Eval.name; path; kind; size; mtime; perm }
-                      | _ -> None)
-                  | _ -> None
-                ) results in
-               Ok entries
-          | Ok (Success _) -> Error "Unexpected query result format"
-          | Ok (Failure msg) -> Error ("Daemon error: " ^ msg)
-          | Error e -> Error e)
+          let open Yojson.Safe.Util in
+          (match member "status" json |> to_string_option with
+           | Some "stream_start" ->
+               let rec read_stream acc =
+                 match Eio.Buf_read.line buf with
+                 | line ->
+                     if line = "===END===" then Ok (List.rev acc)
+                     else if line = "" then read_stream acc
+                     else
+                       (* Basic TSV parse: path \t name \t size \t mtime \t type \t perm *)
+                       (match String.split_on_char '\t' line with
+                       | [path; name; size_str; mtime_str; kind_str; perm_str] ->
+                           let size = try Int64.of_string size_str with _ -> 0L in
+                           let mtime = try float_of_string mtime_str with _ -> 0.0 in
+                           let perm = try int_of_string perm_str with _ -> 0 in
+                           let kind = match kind_str with
+                             | "d" -> Ast.Dir
+                             | "l" -> Ast.Symlink
+                             | _ -> Ast.File
+                           in
+                           let entry = { Eval.name; path; kind; size; mtime; perm } in
+                           read_stream (entry :: acc)
+                       | _ -> 
+                           (* Skip malformed/unknown lines for robustness *)
+                           read_stream acc)
+                 | exception End_of_file ->
+                     Ok (List.rev acc)
+                 | exception ex ->
+                     Error ("Stream read error: " ^ Printexc.to_string ex)
+               in
+               read_stream []
+           | Some "error" -> 
+               let msg = member "message" json |> to_string_option |> Option.value ~default:"Unknown error" in
+               Error ("Daemon error: " ^ msg)
+           | _ -> Error "Expected stream_start from daemon")
+      | exception End_of_file -> Error "Daemon disconnected unexpectedly"
       | exception _ -> Error "Failed to parse daemon response"
     with
     | ex -> 
@@ -319,6 +332,7 @@ module Client = struct
           | Ok (Success (`String msg)) -> Ok msg
           | Ok (Success _) -> Ok "Daemon shutdown initiated"
           | Ok (Failure msg) -> Error msg
+          | Ok (Stream _) -> Error "Unexpected stream response"
           | Error e -> Error e)
       | exception _ -> Error "Failed to parse daemon response"
     with
@@ -339,6 +353,7 @@ module Client = struct
           (match json_to_response json with
           | Ok (Success data) -> Ok data
           | Ok (Failure msg) -> Error msg
+          | Ok (Stream _) -> Error "Unexpected stream response"
           | Error e -> Error e)
       | exception _ -> Error "Failed to parse daemon response"
     with
