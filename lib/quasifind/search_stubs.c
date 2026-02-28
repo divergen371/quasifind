@@ -13,6 +13,7 @@
 #include <caml/alloc.h>
 #include <caml/fail.h>
 #include <caml/unixsupport.h>
+#include <caml/signals.h>
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ARM NEON SIMD-accelerated memmem
@@ -320,7 +321,11 @@ CAMLprim value caml_search_regex(value v_path, value v_pattern)
     pmatch[0].rm_so = 0;
     pmatch[0].rm_eo = st.st_size;
 
+    /* Release OCaml runtime lock while executing regex to allow other fibers/domains to proceed */
+    caml_enter_blocking_section();
     int rc = regexec(&regex, (const char *)addr, 0, pmatch, REG_STARTEND);
+    caml_leave_blocking_section();
+
     if (rc == 0)
     {
         ret = 1; /* Match */
@@ -394,6 +399,7 @@ CAMLprim value caml_search_memmem(value v_path, value v_needle)
     }
 
     /* 4. Search - use SIMD-accelerated version on ARM, libc memmem elsewhere */
+    caml_enter_blocking_section();
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
     void *found = NULL;
     /* For patterns >= 4 bytes, try AC/KMP + NEON pre-filter */
@@ -416,6 +422,8 @@ CAMLprim value caml_search_memmem(value v_path, value v_needle)
 #else
     void *found = memmem(addr, st.st_size, needle, needle_len);
 #endif
+    caml_leave_blocking_section();
+    
     int ret = (found != NULL) ? 1 : 0;
 
     /* 5. Cleanup */
