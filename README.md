@@ -218,7 +218,7 @@ quasifind . 'true' -d 2
 
    ```bash
    # eval(base64...) を含むPHPファイルを検索
-   quasifind /var/www 'name =~ /\.php$/ && content =~ /eval\(base64/' --stealth
+   quasifind /var/www 'name =~ /\.php$/ && content =~ /eval\(base64/'
    ```
 
 2. **エントロピー解析 (`entropy`)**
@@ -234,18 +234,6 @@ quasifind . 'true' -d 2
    ※ `--suspicious` モードでは自動的に実行されます。
    ※ `--suspicious` 単体で実行した場合、デフォルトのルールセット（または `rules.json`）が自動的に適用されます。追加の条件を指定したい場合は `quasifind . --suspicious 'size > 1GB'` のように記述してください。
 
-#### ステルスモード (`--stealth`)
-
-自己隠蔽を行いながら検索を実行します。watchモードで監視し続けるときにも利用可能です。
-
-- **プロセス偽装**: プロセス名を `[kworker/0:0]` などのシステムプロセス風に偽装し、`ps` や `top` で目立たなくします。
-- **タイムスタンプ復元**: `content` や `entropy` のスキャンでファイルを読み込んでも、アクセス日時 (`atime`) を即座に復元し、痕跡を残しません（Anti-Forensics）。
-
-> [!NOTE]
-> **ステルスモードの限界について**
->
-> 本機能はあくまでユーザーランドでのプロセス名書き換えによる簡易的な偽装です。`ps` や `top` 等の一覧表示において目立たなくすることを目的としており、カーネルレベルの隠蔽（Rootkitのような機能）を提供するものではありません。`vscode`、`/proc` ファイルシステム、または詳細なフォレンジック調査に対してその存在を完全に隠すことはできません。あくまで「おまけ機能」としてご利用ください。
-
 #### 怪しいファイル探索 (`--suspicious`)
 
 組み込みのヒューリスティックルールを用いて、侵害の兆候があるファイルを自動的に検出します。
@@ -256,7 +244,7 @@ quasifind . 'true' -d 2
 - 削除されたのに開かれているファイル (Ghost)
 
 ```bash
-quasifind / --suspicious --stealth
+quasifind / --suspicious
 ```
 
 #### ルール自動更新と外部インテリジェンス (`--update-rules`)
@@ -285,7 +273,6 @@ quasifind --update-rules
 - `--save-profile=NAME`: 現在の検索オプションをプロファイルとして保存します。
 - `-w`, `--watch`: ウォッチモード。ファイルシステムの変更を監視し、条件にマッチする新規/変更ファイルを通知します。
 - `--interval=SECONDS`: ウォッチモードのスキャン間隔（秒）。デフォルトは 2 秒。
-- `--stealth`: ステルスモード。プロセス名を偽装し、ファイルアクセス痕跡（atime）を消去します。
 - `--suspicious`: 怪しいファイルを自動検出するプリセットモードです。
 - `--check-ghost`: Ghostファイル（削除済みだが開かれているファイル）を検出します（単体で使用可能）。
 - `--update-rules`: 信頼できる外部ソースから最新の検出ルールをダウンロード・更新します。
@@ -418,7 +405,6 @@ dune runtest
 | Config                | JSON往復テスト         | 3              |
 | RuleConverter         | ユニットテスト         | 3              |
 | Interactive           | ユニット + スモーク    | 4              |
-| Stealth               | スモークテスト         | 3              |
 | Watcher               | ユニット + スモーク    | 6              |
 | **ART (Daemon)**      | ユニットテスト         | 5              |
 | **VFS (Daemon)**      | ユニットテスト         | 5              |
