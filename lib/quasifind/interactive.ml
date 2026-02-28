@@ -118,7 +118,38 @@ module TUI = struct
   let truncate s len =
     let len = max 10 len in
     if String.length s <= len then s
-    else String.sub s 0 (len - 3) ^ "..."
+    else
+      (* UTF-8 safe truncation: don't break in the middle of a multi-byte sequence.
+         UTF-8 continuation bytes start with 10xxxxxx (0x80 to 0xBF). *)
+      let rec find_safe_end i =
+        if i <= 0 then 0
+        else
+          let c = Char.code (String.get s i) in
+          if c land 0xC0 <> 0x80 then i (* Not a continuation byte *)
+          else find_safe_end (i - 1)
+      in
+      let end_idx = find_safe_end (len - 3) in
+      String.sub s 0 end_idx ^ "..."
+
+  let sanitize s =
+    let b = Buffer.create (String.length s) in
+    let len = String.length s in
+    let i = ref 0 in
+    while !i < len do
+      let c = String.get s !i in
+      let code = Char.code c in
+      if code < 32 then (
+        (* Handle common whitespace, replace others *)
+        if c = '\n' || c = '\r' || c = '\t' then Buffer.add_char b ' '
+        else (Buffer.add_string b "^" ; Buffer.add_char b (Char.chr (code + 64)))
+      ) else if code = 127 then (
+        Buffer.add_string b "^?"
+      ) else (
+        Buffer.add_char b c
+      ) ;
+      incr i
+    done;
+    Buffer.contents b
 
   (* Shell-safe quoting for preview command argument *)
   let shell_quote s =
@@ -151,7 +182,7 @@ module TUI = struct
         | ic ->
             let lines = read_lines_seq ic |> List.of_seq in
             ignore (Unix.close_process_in ic);
-            lines
+            List.map sanitize lines
         | exception Unix.Unix_error (err, _, _) ->
             Printf.eprintf "[Warning] Preview command failed: %s\n%!" (Unix.error_message err);
             ["(Preview error)"]

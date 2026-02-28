@@ -7,7 +7,20 @@ let test_truncate () =
   check string "exact length" "hello" (Interactive.TUI.truncate "hello" 5);
   (* With min length 10, truncating "hello world" to 8 still uses 10, so "hello ..." *)
   check string "truncated to min" "hello w..." (Interactive.TUI.truncate "hello world" 8);
-  check string "truncated longer" "hello w..." (Interactive.TUI.truncate "hello world again" 10)
+  check string "truncated longer" "hello w..." (Interactive.TUI.truncate "hello world again" 10);
+  (* UTF-8 Tests: 日本語 (3 bytes per char) *)
+  (* "こんにちは" (15 bytes) truncated to 10 bytes should not break in the middle of 'に' *)
+  (* "こ" (3b), "ん" (3b), "に" (3b) -> total 9 bytes. 10th byte would be start of 'ち'. *)
+  (* If truncated to 10 bytes (including "..."): len-3 = 7. 
+     "こ"(3), "ん"(3), "に"(1st byte) -> should revert to 6 bytes "こん" *)
+  check string "utf8 truncate" "こん..." (Interactive.TUI.truncate "こんにちは" 10)
+
+let test_sanitize () =
+  check string "printable" "hello" (Interactive.TUI.sanitize "hello");
+  check string "newline" "hello world" (Interactive.TUI.sanitize "hello\nworld");
+  check string "control" "^A^B^C" (Interactive.TUI.sanitize "\001\002\003");
+  check string "utf8 preserve" "こんにちは" (Interactive.TUI.sanitize "こんにちは");
+  check string "mixed" "こん^Aにち" (Interactive.TUI.sanitize "こん\001にち")
 
 let test_shell_quote () =
   (* Test shell_quote escapes single quotes correctly *)
@@ -61,6 +74,7 @@ let suite = [
     test_case "Escape Sequences" `Quick test_escape_sequences;
     test_case "is_atty exists" `Quick test_is_atty_function_exists;
     test_case "Fuzzy Matcher Rank" `Quick test_fuzzy_rank;
+    test_case "Sanitize" `Quick test_sanitize;
   ]
 ]
 

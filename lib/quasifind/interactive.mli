@@ -28,6 +28,10 @@ module TUI : sig
       appending "..." if it exceeds the limit. *)
   val truncate : string -> int -> string
 
+  (** [sanitize str] replaces non-printable characters and control codes with readable equivalents 
+      to prevent terminal corruption, while preserving UTF-8 multi-byte characters. *)
+  val sanitize : string -> string
+
   (** Safely quotes a string for bash execution. Exposed for testing. *)
   val shell_quote : string -> string
 

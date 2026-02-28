@@ -194,7 +194,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
             Printf.eprintf "No results found.\n"
           ) else (
              let preview_cmd = match exec_command, exec_batch_command with
-               | None, None -> Some "head -n 100 {} 2>/dev/null | cat -v || echo \"Not a readable file\""
+               | None, None -> Some "head -n 100 {} 2>/dev/null || echo \"Not a readable file\""
                | Some _, _ | None, Some _ -> None
              in
             match Interactive.select ~finder:Config.Builtin ?preview_cmd candidates with
