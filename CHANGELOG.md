@@ -2,17 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.1.0] - 2026-02-28
 
 ### Features
 
-- **Resilience**: Added Heartbeat monitoring to detect process termination (`--notify-url` or `heartbeat_url` in config).
-- **Integrity**: Implemented configuration tamper detection (automatically alerts if `config.json` is modified).
-- **Integrity**: Added `--integrity` / `-I` flag to verify the binary checksum.
+- **Parallel Optimization**: Released OCaml domain lock during heavy C search operations (regex/SIMD), significantly improving concurrency in multi-core environments.
+- **TUI Improvements**: Enhanced built-in TUI with UTF-8 safe truncation and non-printable character sanitization, enabling stable Japanese and binary file previews.
+- **Resilience**: Added Heartbeat monitoring to detect process termination.
+- **Integrity**: Implemented configuration tamper detection and `--integrity` flag for binary verification.
 
 ### Fixes
 
-- **Stealth Mode**: Changed default masked process name on macOS to `syslogd` (from `[kworker/0:0]`) to appear less suspicious.
+- **C FFI Safety**: Heavy refactoring of C stubs (`search`, `fsevents`, `dirent`) to strictly follow OCaml FFI rules, preventing segments faults and memory leaks.
+- **FSEvents**: Implemented snapshotting to reduce lock contention and prevent event drops on macOS.
+- **Directory Traversal**: Replaced `seekdir` with a pending entry cache for robust batch reading.
+- **Security**: Removed dangerous and unstable "Stealth Mode" (process masking).
 
 ## [1.0.1] - 2026-02-03
 
