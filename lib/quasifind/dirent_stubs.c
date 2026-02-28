@@ -263,7 +263,8 @@ CAMLprim value caml_readdir_batch(value v_dir, value v_buf, value v_off, value v
     if (errno != 0 && written == 0 && !dh->has_pending)
     {
         /* Error occurred and we wrote nothing, and we aren't just blocked by space */
-        uerror("readdir", Val_unit); // Path unknown here, passed unit is vague but uerror expects value
+        /* Passing Val_unit causes segfault inside uerror since it expects an OCaml string. */
+        uerror("readdir", caml_copy_string("<batch>"));
     }
 
     CAMLreturn(Val_int(written));
