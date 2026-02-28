@@ -195,8 +195,11 @@ module TUI = struct
         (* Right pane: preview *)
         let right_content =
           if preview_cmd = None then ""
-          else if idx < List.length preview_lines then
-            truncate (List.nth preview_lines idx) right_width
+          else if idx = 0 && selected_item <> "" then
+            let title = "[ Preview: " ^ Filename.basename selected_item ^ " ]" in
+            esc ^ "[1;34m" ^ truncate title right_width ^ esc ^ "[0m"
+          else if idx - 1 >= 0 && idx - 1 < List.length preview_lines then
+            truncate (List.nth preview_lines (idx - 1)) right_width
           else ""
         in
         

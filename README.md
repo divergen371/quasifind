@@ -114,6 +114,16 @@ quasifind . 'type == dir && name =~ /^test_/'
 quasifind history --exec
 ```
 
+検索結果からファイルをインタラクティブに選択して操作:
+
+```bash
+# 結果から一つ選んでパスを表示 (vim $(quasifind -i .) 等に便利)
+quasifind -i . 'name =~ /\.ml$/'
+
+# 選択したファイルにのみコマンドを実行
+quasifind -i . 'size > 10MB' -x "ls -lh {}"
+```
+
 履歴の一覧を表示:
 
 ```bash
@@ -265,6 +275,7 @@ quasifind --update-rules
 - `-d DEPTH`, `--max-depth=DEPTH`: 探索する最大深度を指定します。
 - `-h`: ヘルプを表示します。
 - `-H`, `--hidden`: 隠しファイル・ディレクトリ（.で始まるもの）も含めて検索します（デフォルトでは除外されます）。
+- `-i`, `--interactive`: 検索結果をインタラクティブなUI (fzf / builtin) に渡し、選択されたファイルを出力またはコマンド実行します。
 - `-j JOBS`, `--jobs=JOBS`: 並列実行するジョブ数（スレッド数）を指定します。デフォルトは 1 です。
 - `-L`, `--follow`: シンボリックリンクを追跡します。
 - `-x CMD`, `--exec=CMD`: 各検索結果に対してコマンドを実行します。`{}` はパスに置換されます。

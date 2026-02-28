@@ -1,0 +1,24 @@
+# Tasks
+
+- [x] **Interactive Search Integration**
+  - [x] Add `-i` / `--interactive` option to CLI (`bin/main.ml`).
+  - [x] Update `search` function signature to accept `interactive:bool`.
+  - [x] Buffer search results if `interactive` mode is enabled.
+  - [x] Launch `Interactive.select` with the collected paths.
+  - [x] Handle single file output or `exec` command execution based on Selection.
+- [x] **Tests & Verification**
+  - [x] Verify `--interactive` option parsing in automated test. (N/A - Cmdliner not unit tested)
+  - [x] Manually test `quasifind -i` to ensure fzf/builtin fallback works correctly.
+  - [x] Manually test `quasifind -i -x "echo {}"` interaction.
+- [x] **Documentation**
+  - [x] Update `README.md` with `-i` option details.
+  - [x] Update `README.ja.md` with `-i` option details. (N/A - File not found)
+- [x] **Fuzzy Matcher Improvements**
+  - [x] Investigate scoring algorithm in `fuzzy_matcher.ml`
+  - [x] Fix scoring logic so exact substring/contiguous matches are ranked higher
+  - [x] Test with queries to verify
+- [x] **TUI Bug Fixes**
+  - [x] Prevent binary files from corrupting the builtin TUI via non-printable chars
+  - [x] Prevent extreme lag on massive files in preview panel
+  - [x] Prevent `head` stderr leaks when previewing directories
+  - [x] Add a visual header to the preview pane to clarify that it displays the currently selected item's preview

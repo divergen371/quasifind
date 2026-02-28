@@ -93,11 +93,11 @@ let match_score ~query ~candidate =
          (* The term for k=j-1 is dp[i-1][j-1] + (j-1)*E *)
          let prev_val = dp.(i-1).(j-1) in
          if prev_val > min_int then (
-            let val_with_pos = prev_val + (j-1) * gap_extend_penalty in
+            let val_with_pos = prev_val - (j-1) * gap_extend_penalty in
             if val_with_pos > !max_prev_gapped then max_prev_gapped := val_with_pos
          );
       
-         if Char.lowercase_ascii query.[i] = Char.lowercase_ascii candidate.[j] then
+         if Char.lowercase_ascii query.[i] = Char.lowercase_ascii candidate.[j] then (
             let bonus = 
               if is_separator candidate.[j-1] then boundary_bonus
               else if is_upper candidate.[j] && not (is_upper candidate.[j-1]) then camel_bonus
@@ -106,20 +106,19 @@ let match_score ~query ~candidate =
             
             (* 1. Contiguous from j-1 *)
             let score_contiguous = 
-              if prev_val > min_int then prev_val + score_match + bonus + 2 (* context bonus *)
+              if prev_val > min_int then prev_val + score_match + bonus + 5 (* higher contiguous context bonus *)
               else min_int
             in
             
-            (* 2. Gapped from any k < j-1 (or j-1 if we treat it as gap, but better handled as contiguous) *)
-            (* max_prev_gapped has max(dp[i-1][k] + k*E). 
-               We simply subtract j*E + O *)
+            (* 2. Gapped from any k < j-1 *)
             let score_gapped =
               if !max_prev_gapped > min_int then
-                 !max_prev_gapped - (j * gap_extend_penalty) + gap_open_penalty + score_match + bonus
+                 !max_prev_gapped + (j * gap_extend_penalty) + gap_open_penalty + score_match + bonus
               else min_int
             in
             
             dp.(i).(j) <- max score_contiguous score_gapped
+         )
       done
     done;
     

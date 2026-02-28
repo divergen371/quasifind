@@ -29,12 +29,38 @@ let test_is_atty_function_exists () =
   let _ = Interactive.is_atty () in
   ()
 
+let test_fuzzy_rank () =
+  let candidates = [
+    "./lib/quasifind/fsevents_stubs.c";
+    "./lib/quasifind/stealth_stubs.c";
+    "./test_file_phase2_live_update.txt";
+    "./lib/quasifind/dirent_stubs.c";
+    "./lib/quasifind/search_stubs.c";
+    "./docs/mli_interfaces_and_odoc/implementation_plan.md";
+    "./lib/quasifind/rule_converter.ml";
+    "./lib/quasifind/rule_converter.mli";
+    "./docs/interactive_search_feature";
+    "./lib/quasifind/fuzzy_matcher.ml";
+    "./lib/quasifind/ast.ml";
+  ] in
+  let results = Fuzzy_matcher.rank ~query:"ast" ~candidates in
+  Printf.printf "\n--- RANK RESULTS for 'ast' ---\n";
+  List.iteri (fun i s ->
+    let score =
+      match Fuzzy_matcher.match_score ~query:"ast" ~candidate:s with
+      | Some s -> string_of_int s | None -> "none"
+    in
+    Printf.printf "%d (score %s): %s\n" (i+1) score s
+  ) results;
+  check string "first ranked is ast.ml" "./lib/quasifind/ast.ml" (List.hd results)
+
 let suite = [
   "Interactive.TUI", [
     test_case "Truncate" `Quick test_truncate;
     test_case "Shell Quote" `Quick test_shell_quote;
     test_case "Escape Sequences" `Quick test_escape_sequences;
     test_case "is_atty exists" `Quick test_is_atty_function_exists;
+    test_case "Fuzzy Matcher Rank" `Quick test_fuzzy_rank;
   ]
 ]
 
