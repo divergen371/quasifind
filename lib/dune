@@ -16,7 +16,6 @@
   config
   profile
   watcher
-  stealth
   suspicious
   ghost
   intern
@@ -33,7 +32,7 @@
  (libraries angstrom re eio eio_main yojson str saturn)
  (foreign_stubs
   (language c)
-  (names stealth_stubs dirent_stubs search_stubs fsevents_stubs))
+  (names dirent_stubs search_stubs fsevents_stubs))
  (c_library_flags
   (-framework CoreServices))
  (preprocess

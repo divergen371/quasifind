@@ -55,10 +55,6 @@
  (libraries quasifind alcotest str))
 
 (test
- (name test_stealth)
- (libraries quasifind alcotest))
-
-(test
  (name test_watcher)
  (libraries quasifind alcotest))
 

@@ -108,10 +108,28 @@ CAMLprim value caml_readdir_with_type(value v_path)
 
 /* --- Batch Readdir Implementation --- */
 
+typedef struct {
+    DIR *dir;
+    char pending_name[256]; /* Standard max filename length is 255 */
+    int pending_kind;
+    int has_pending;
+} dir_handle_t;
+
+/* Custom finalize function to ensure DIR* is closed when GC'd */
+static void finalize_dir_handle(value v_dir)
+{
+    dir_handle_t *dh = (dir_handle_t *)Data_custom_val(v_dir);
+    if (dh->dir != NULL)
+    {
+        closedir(dh->dir);
+        dh->dir = NULL;
+    }
+}
+
 /* Custom block for DIR* to handle finalization safely */
 static struct custom_operations dir_handle_ops = {
     "quasifind.dir_handle",
-    custom_finalize_default,
+    finalize_dir_handle,         /* Added safe cleanup */
     custom_compare_default,
     custom_hash_default,
     custom_serialize_default,
@@ -120,7 +138,7 @@ static struct custom_operations dir_handle_ops = {
     custom_fixed_length_default};
 
 /* Access hidden struct safely */
-#define Dir_val(v) (*((DIR **)Data_custom_val(v)))
+#define Dir_val(v) ((dir_handle_t *)Data_custom_val(v))
 
 CAMLprim value caml_opendir(value v_path)
 {
@@ -133,8 +151,10 @@ CAMLprim value caml_opendir(value v_path)
         uerror("opendir", v_path);
     }
 
-    value v_dir = caml_alloc_custom(&dir_handle_ops, sizeof(DIR *), 0, 1);
-    Dir_val(v_dir) = d;
+    value v_dir = caml_alloc_custom(&dir_handle_ops, sizeof(dir_handle_t), 0, 1);
+    dir_handle_t *dh = Dir_val(v_dir);
+    dh->dir = d;
+    dh->has_pending = 0;
 
     CAMLreturn(v_dir);
 }
@@ -142,11 +162,11 @@ CAMLprim value caml_opendir(value v_path)
 CAMLprim value caml_closedir(value v_dir)
 {
     CAMLparam1(v_dir);
-    DIR *d = Dir_val(v_dir);
-    if (d != NULL)
+    dir_handle_t *dh = Dir_val(v_dir);
+    if (dh->dir != NULL)
     {
-        closedir(d);
-        Dir_val(v_dir) = NULL; /* Prevent double close */
+        closedir(dh->dir);
+        dh->dir = NULL; /* Prevent double close */
     }
     CAMLreturn(Val_unit);
 }
@@ -163,8 +183,8 @@ CAMLprim value caml_readdir_batch(value v_dir, value v_buf, value v_off, value v
 {
     CAMLparam4(v_dir, v_buf, v_off, v_len);
 
-    DIR *d = Dir_val(v_dir);
-    if (d == NULL)
+    dir_handle_t *dh = Dir_val(v_dir);
+    if (dh->dir == NULL)
         caml_failwith("Directory already closed");
 
     unsigned char *buf = Bytes_val(v_buf);
@@ -181,26 +201,45 @@ CAMLprim value caml_readdir_batch(value v_dir, value v_buf, value v_off, value v
         if (written + 4 > capacity)
             break;
 
-        long loc = telldir(d); /* Save position to rewind if entry doesn't fit */
-        de = readdir(d);
+        const char *name = NULL;
+        int name_len = 0;
+        int kind = 0;
 
-        if (de == NULL)
-            break; /* End of Dir or Error */
+        if (dh->has_pending)
+        {
+            name = dh->pending_name;
+            name_len = strlen(name);
+            kind = dh->pending_kind;
+        }
+        else
+        {
+            de = readdir(dh->dir);
+            if (de == NULL)
+                break; /* End of Dir or Error */
 
-        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
-            continue;
+            if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+                continue;
 
-        int name_len = strlen(de->d_name);
+            name = de->d_name;
+            name_len = strlen(name);
+            kind = map_dtype(de->d_type);
+        }
+
         int entry_size = 1 + 2 + name_len;
 
         if (written + entry_size > capacity)
         {
-            /* Not enough space for this entry. Rewind and return what we have. */
-            seekdir(d, loc);
+            /* Not enough space for this entry. Cache it in C side for the next batch */
+            if (!dh->has_pending)
+            {
+                /* Only copy if it's a new entry that we pulled from readdir */
+                strncpy(dh->pending_name, name, sizeof(dh->pending_name) - 1);
+                dh->pending_name[sizeof(dh->pending_name) - 1] = '\0';
+                dh->pending_kind = kind;
+                dh->has_pending = 1;
+            }
             break;
         }
-
-        int kind = map_dtype(de->d_type);
 
         /* Write [kind:1] */
         buf[offset + written] = (unsigned char)kind;
@@ -210,14 +249,20 @@ CAMLprim value caml_readdir_batch(value v_dir, value v_buf, value v_off, value v
         buf[offset + written + 2] = (unsigned char)((name_len >> 8) & 0xFF);
 
         /* Write [name] */
-        memcpy(buf + offset + written + 3, de->d_name, name_len);
+        memcpy(buf + offset + written + 3, name, name_len);
 
         written += entry_size;
+
+        /* Clear pending state if we successfully wrote the pending item */
+        if (dh->has_pending)
+        {
+            dh->has_pending = 0;
+        }
     }
 
-    if (errno != 0 && written == 0)
+    if (errno != 0 && written == 0 && !dh->has_pending)
     {
-        /* Error occurred and we wrote nothing */
+        /* Error occurred and we wrote nothing, and we aren't just blocked by space */
         uerror("readdir", Val_unit); // Path unknown here, passed unit is vague but uerror expects value
     }
 

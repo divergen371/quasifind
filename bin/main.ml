@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode =
   if help_short then `Help (`Auto, None)
   else (
   
@@ -30,9 +30,6 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
   ) else (
   (* Regular Search Logic *)
   
-  (* If --stealth is enabled, mask process name *)
-  if stealth_mode then Stealth.enable ();
-
   (* If --profile is specified, load profile and use its settings *)
   match profile_name with
   | Some name ->
@@ -45,7 +42,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url stealth_mode suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -66,7 +63,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
         let ignore_patterns = config.ignore @ exclude in
         let ignore_re = List.map (fun p -> Re.Glob.glob p |> Re.compile) ignore_patterns in
         
-        let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; ignore_re; preserve_timestamps = stealth_mode; spawn = Some spawn_fn } in
+        let cfg = { Traversal.strategy; max_depth; follow_symlinks; include_hidden; ignore = ignore_patterns; ignore_re; preserve_timestamps = false; spawn = Some spawn_fn } in
         
         let batch_paths = ref [] in
         let all_found_paths = ref [] in
@@ -177,7 +174,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
 
              if not !used_daemon then (
                Traversal.traverse cfg root_dir typed_ast (fun entry ->
-                 if Eval.eval ~preserve_timestamps:stealth_mode now typed_ast entry then (
+                 if Eval.eval ~preserve_timestamps:false now typed_ast entry then (
                    Eio.Stream.add results_stream (Some entry)
                  )
                )
@@ -405,7 +402,7 @@ let watch_log = Arg.(value & opt (some string) None & info ["log"] ~docv:"FILE" 
 let webhook_url = Arg.(value & opt (some string) None & info ["notify-url"] ~docv:"URL" ~doc:"Webhook URL for notifications (HTTP POST with JSON).")
 let email_addr = Arg.(value & opt (some string) None & info ["notify-email"] ~docv:"EMAIL" ~doc:"Email address for notifications (requires mail command).")
 let slack_url = Arg.(value & opt (some string) None & info ["slack-webhook"] ~docv:"URL" ~doc:"Slack incoming webhook URL.")
-let stealth_mode = Arg.(value & flag & info ["stealth"] ~doc:"Stealth mode: mask process name from system tools.")
+
 let suspicious_mode = Arg.(value & flag & info ["suspicious"] ~doc:"Suspicious mode: search for potentially dangerous files using built-in rules.")
 let update_rules = Arg.(value & flag & info ["update-rules"] ~doc:"Download and update heuristic rules from trusted source.")
 let check_ghost = Arg.(value & flag & info ["check-ghost"] ~doc:"Detect deleted files that are still open.")
@@ -435,7 +432,7 @@ let daemon_info = Cmd.info "daemon"
 
 let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ stealth_mode $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 

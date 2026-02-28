@@ -5,6 +5,7 @@
 #include <CoreServices/CoreServices.h>
 #include <pthread.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include <caml/mlvalues.h>
 #include <caml/memory.h>
@@ -120,21 +121,53 @@ CAMLprim value caml_fsevents_poll(value v_unit)
     CAMLparam1(v_unit);
     CAMLlocal2(result, cons);
 
-    result = Val_emptylist;
+    int count = 0;
+    char **snapshot = NULL;
 
     pthread_mutex_lock(&event_buf.mutex);
-    while (event_buf.count > 0)
+    count = event_buf.count;
+    if (count > 0)
     {
-        /* Build list in reverse (most recent first, but that's fine) */
-        cons = caml_alloc(2, 0);
-        Store_field(cons, 0, caml_copy_string(event_buf.paths[event_buf.head]));
-        Store_field(cons, 1, result);
-        result = cons;
-
-        event_buf.head = (event_buf.head + 1) % MAX_EVENTS;
-        event_buf.count--;
+        snapshot = (char **)malloc(count * sizeof(char *));
+        if (snapshot != NULL)
+        {
+            for (int i = 0; i < count; i++)
+            {
+                /* strdup the string so we own it outside the lock */
+                snapshot[i] = strdup(event_buf.paths[event_buf.head]);
+                event_buf.head = (event_buf.head + 1) % MAX_EVENTS;
+            }
+            event_buf.count = 0;
+        }
+        else
+        {
+            /* Malloc failed, leave events in buffer and return empty this time */
+            count = 0; 
+        }
     }
     pthread_mutex_unlock(&event_buf.mutex);
+
+    result = Val_emptylist;
+
+    if (snapshot != NULL)
+    {
+        /* Process the snapshot completely outside the critical section.
+           This allows OCaml's GC to run during allocations (#caml_alloc/#caml_copy_string)
+           without blocking the background push_event thread. */
+        for (int i = 0; i < count; i++)
+        {
+            if (snapshot[i] != NULL)
+            {
+                cons = caml_alloc(2, 0);
+                Store_field(cons, 0, caml_copy_string(snapshot[i]));
+                Store_field(cons, 1, result);
+                result = cons;
+                
+                free(snapshot[i]);
+            }
+        }
+        free(snapshot);
+    }
 
     CAMLreturn(result);
 }

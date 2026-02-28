@@ -10,5 +10,5 @@ module Typecheck = Typecheck
 module Eval = Eval
 module Profile = Profile
 module Watcher = Watcher
-module Stealth = Stealth
+
 module Suspicious = Suspicious

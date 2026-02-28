@@ -254,6 +254,13 @@ static void *ac_lite_search_neon(const ac_lite_t *ac,
 CAMLprim value caml_search_regex(value v_path, value v_pattern)
 {
     CAMLparam2(v_path, v_pattern);
+
+#ifndef REG_STARTEND
+    /* Without REG_STARTEND, we cannot safely use regexec on mmap'd data
+       because the mapped region is not guaranteed to be null-terminated.
+       We fail explicitly here to prevent out-of-bounds reads. */
+    caml_failwith("Regex search on mmap requires REG_STARTEND support on this OS.");
+#else
     const char *path = String_val(v_path);
     const char *pattern = String_val(v_pattern);
     int ret = 0;
@@ -308,22 +315,7 @@ CAMLprim value caml_search_regex(value v_path, value v_pattern)
     }
 
     /* 5. Execute Regex */
-    /* regexec expects null-terminated string usually, but with REG_STARTEND (BSD extension)
-       we could specify length. However, standard POSIX regexec works on null-terminated strings.
-       mmap memory is NOT null-terminated!
-
-       CRITICAL: POSIX regexec does NOT support length argument.
-       Standard regexec will run off the end of mmap if no null byte is found!
-
-       Solutions:
-       A. Linux/BSD often have REG_STARTEND (non-standard but common).
-       B. Search chunk by chunk? (Complex)
-       C. Safe fallback: If file is huge, this is risky without REG_STARTEND.
-          macOS (BSD) has REG_STARTEND. Linux (glibc) has REG_STARTEND.
-          We should try to use REG_STARTEND.
-    */
-
-#ifdef REG_STARTEND
+    /* We use REG_STARTEND to safely bound the search within the mmap'd size */
     regmatch_t pmatch[1];
     pmatch[0].rm_so = 0;
     pmatch[0].rm_eo = st.st_size;
@@ -337,11 +329,6 @@ CAMLprim value caml_search_regex(value v_path, value v_pattern)
     {
         ret = 0; /* No match (REG_NOMATCH) */
     }
-#else
-    /* Without REG_STARTEND, we cannot safely use regexec on mmap'd data unless we know it has nulls.
-       We must fallback. */
-    ret = -1;
-#endif
 
     /* 6. Cleanup */
     munmap(addr, st.st_size);
@@ -349,6 +336,7 @@ CAMLprim value caml_search_regex(value v_path, value v_pattern)
     regfree(&regex);
 
     CAMLreturn(Val_int(ret));
+#endif
 }
 
 /*
