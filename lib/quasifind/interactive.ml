@@ -102,18 +102,41 @@ module TUI = struct
     filtered : string list;
     selected_idx : int;
     scroll_offset : int;
+    preview_cache : (string * string list) option;
+    (* (cached_item, cached_lines): avoid re-running preview command
+       when the selected item has not changed between renders. *)
   }
 
   let get_term_size () =
-    try
-      let ic = Unix.open_process_in "tput cols" in
-      let cols = try int_of_string (String.trim (input_line ic)) with _ -> 80 in
-      ignore (Unix.close_process_in ic);
-      let ic = Unix.open_process_in "tput lines" in
-      let rows = try int_of_string (String.trim (input_line ic)) with _ -> 24 in
-      ignore (Unix.close_process_in ic);
-      (cols, rows)
-    with _ -> (80, 24)
+    (* Prefer environment variables set by the shell (fast, no subprocess).
+       Fall back to a single `stty size` call which returns "rows cols" in one shot.
+       This avoids spawning two tput processes per render. *)
+    let from_env () =
+      try
+        let cols = int_of_string (Sys.getenv "COLUMNS") in
+        let rows = int_of_string (Sys.getenv "LINES") in
+        Some (cols, rows)
+      with _ -> None
+    in
+    let from_stty () =
+      try
+        let ic = Unix.open_process_in "stty size 2>/dev/null" in
+        let line = try input_line ic with End_of_file -> "" in
+        ignore (Unix.close_process_in ic);
+        match String.split_on_char ' ' (String.trim line) with
+        | [rows_s; cols_s] ->
+          (match int_of_string_opt rows_s, int_of_string_opt cols_s with
+           | Some rows, Some cols -> Some (cols, rows)
+           | _ -> None)
+        | _ -> None
+      with _ -> None
+    in
+    match from_env () with
+    | Some dims -> dims
+    | None ->
+      match from_stty () with
+      | Some dims -> dims
+      | None -> (80, 24)
 
   let truncate s len =
     let len = max 10 len in
@@ -187,19 +210,25 @@ module TUI = struct
             Printf.eprintf "[Warning] Preview command failed: %s\n%!" (Unix.error_message err);
             ["(Preview error)"]
 
+  (* Render the TUI. Returns updated state (preview cache may have changed). *)
   let render state display_rows (cols, _) preview_cmd =
     let left_width = cols / 2 - 1 in
     let right_width = cols - left_width - 3 in (* 3 for separator *)
     
-    (* Get preview content for selected item *)
+    (* Get preview content for selected item, using cache when possible. *)
     let selected_item = 
       if state.selected_idx < List.length state.filtered then
         List.nth state.filtered state.selected_idx
       else ""
     in
-    let preview_lines = 
-      if preview_cmd = None then [] 
-      else get_preview preview_cmd selected_item 
+    let preview_lines =
+      if preview_cmd = None then []
+      else
+        match state.preview_cache with
+        | Some (cached_item, cached_lines) when cached_item = selected_item ->
+          cached_lines (* Cache hit: same selected item, skip subprocess *)
+        | _ ->
+          get_preview preview_cmd selected_item
     in
     
     (* Status line *)
@@ -249,78 +278,89 @@ module TUI = struct
       end
     in
     print_row 0;
-    
     Printf.eprintf "%s" (move_up (display_rows + 1));
-    flush stderr
+    flush stderr;
+    (* Return updated state with refreshed preview cache *)
+    if preview_cmd = None || selected_item = "" then state
+    else
+      match state.preview_cache with
+      | Some (cached_item, _) when cached_item = selected_item -> state
+      | _ -> { state with preview_cache = Some (selected_item, preview_lines) }
 
   let loop ?preview_cmd candidates =
     let orig_termios = enable_raw () in
     output_string stderr hide_cursor;
     let term_dims = get_term_size () in
-    
+
     let rec aux state =
-      render state 10 term_dims preview_cmd;
-      
+      let state' = render state 10 term_dims preview_cmd in
       match read_key () with
       | None -> None
       | Some key ->
         match key with
         | Esc -> None
-        | Enter -> 
-             if state.selected_idx < List.length state.filtered then
-               Some (List.nth state.filtered state.selected_idx)
+        | Enter ->
+             if state'.selected_idx < List.length state'.filtered then
+               Some (List.nth state'.filtered state'.selected_idx)
              else None
         | Backspace ->
-             let q = state.query in
+             let q = state'.query in
              let len = String.length q in
              let new_q = if len > 0 then String.sub q 0 (len - 1) else q in
-             let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state.orig_candidates in
-             aux { state with query = new_q; filtered = new_filtered; selected_idx = 0; scroll_offset = 0 }
+             let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state'.orig_candidates in
+             (* Selection changed: invalidate preview cache *)
+             aux { state' with query = new_q; filtered = new_filtered;
+                               selected_idx = 0; scroll_offset = 0;
+                               preview_cache = None }
         | Up ->
-             let sel = max 0 (state.selected_idx - 1) in
-             let scroll = 
-               if sel < state.scroll_offset then sel 
-               else state.scroll_offset 
+             let sel = max 0 (state'.selected_idx - 1) in
+             let scroll =
+               if sel < state'.scroll_offset then sel
+               else state'.scroll_offset
              in
-             aux { state with selected_idx = sel; scroll_offset = scroll }
+             aux { state' with selected_idx = sel; scroll_offset = scroll }
         | Down ->
-             let sel = min (List.length state.filtered - 1) (state.selected_idx + 1) in
-             let scroll = 
-               if sel >= state.scroll_offset + 10 then sel - 9
-               else state.scroll_offset
+             let sel = min (List.length state'.filtered - 1) (state'.selected_idx + 1) in
+             let scroll =
+               if sel >= state'.scroll_offset + 10 then sel - 9
+               else state'.scroll_offset
              in
-             aux { state with selected_idx = sel; scroll_offset = scroll }
+             aux { state' with selected_idx = sel; scroll_offset = scroll }
         | Char c ->
              let code = Char.code c in
              (* Support C-p / C-n as well *)
              if code = 14 then (* C-n *)
-                 let sel = min (List.length state.filtered - 1) (state.selected_idx + 1) in
-                 let scroll = if sel >= state.scroll_offset + 10 then sel - 9 else state.scroll_offset in
-                 aux { state with selected_idx = sel; scroll_offset = scroll }
+                 let sel = min (List.length state'.filtered - 1) (state'.selected_idx + 1) in
+                 let scroll = if sel >= state'.scroll_offset + 10 then sel - 9 else state'.scroll_offset in
+                 aux { state' with selected_idx = sel; scroll_offset = scroll }
              else if code = 16 then (* C-p *)
-                 let sel = max 0 (state.selected_idx - 1) in
-                 let scroll = if sel < state.scroll_offset then sel else state.scroll_offset in
-                 aux { state with selected_idx = sel; scroll_offset = scroll }
+                 let sel = max 0 (state'.selected_idx - 1) in
+                 let scroll = if sel < state'.scroll_offset then sel else state'.scroll_offset in
+                 aux { state' with selected_idx = sel; scroll_offset = scroll }
              else if code >= 32 && code <= 126 then
-               let new_q = state.query ^ String.make 1 c in
-               let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state.orig_candidates in
-               aux { state with query = new_q; filtered = new_filtered; selected_idx = 0; scroll_offset = 0 }
+               let new_q = state'.query ^ String.make 1 c in
+               let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state'.orig_candidates in
+               (* Query changed: invalidate preview cache *)
+               aux { state' with query = new_q; filtered = new_filtered;
+                                 selected_idx = 0; scroll_offset = 0;
+                                 preview_cache = None }
              else
-               aux state
-        | Unknown -> aux state
+               aux state'
+        | Unknown -> aux state'
     in
-    
+
     let init_state = {
        query = "";
        orig_candidates = candidates;
        filtered = candidates;
        selected_idx = 0;
        scroll_offset = 0;
+       preview_cache = None;
     } in
-    
+
     try
       let res = aux init_state in
-      Printf.eprintf "%s" (csi ^ string_of_int 11 ^ "B"); 
+      Printf.eprintf "%s" (csi ^ string_of_int 11 ^ "B");
       output_string stderr show_cursor;
       disable_raw orig_termios;
       res
@@ -328,7 +368,7 @@ module TUI = struct
       output_string stderr show_cursor;
       disable_raw orig_termios;
       raise e
-end
+  end
 
 let select ?(query="") ?(finder=Config.Auto) ?preview_cmd candidates =
   if not (is_atty ()) then (
@@ -343,11 +383,13 @@ let select ?(query="") ?(finder=Config.Auto) ?preview_cmd candidates =
   in
   
   if use_fzf then
-    if check_fzf_availability () then
-      run_fzf ?preview_cmd candidates
-    else (
-      if finder = Config.Fzf then Printf.eprintf "Warning: fzf not found, falling back to builtin TUI.\n";
+    (* use_fzf already verified fzf availability for Auto mode;
+       only re-check when the user explicitly requested fzf (Config.Fzf)
+       to provide a helpful warning on PATH changes at runtime. *)
+    if finder = Config.Fzf && not (check_fzf_availability ()) then (
+      Printf.eprintf "Warning: fzf not found, falling back to builtin TUI.\n";
       TUI.loop ?preview_cmd candidates
-    )
+    ) else
+      run_fzf ?preview_cmd candidates
   else
     TUI.loop ?preview_cmd candidates
