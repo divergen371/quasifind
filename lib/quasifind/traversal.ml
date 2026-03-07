@@ -262,8 +262,51 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
   
   let pool = Work_pool.create ~concurrency in
   
-  (* Initial task to worker 0 *)
-  Work_pool.push pool 0 (start_path, 0);
+  (* Initial task distribution (Pre-spreading)
+     To unleash maximum parallelism from the start, especially for shallow but wide
+     directories, we scan the root path synchronously and distribute its subdirectories
+     across all worker queues round-robin, emitting top-level files immediately.
+     This way, all workers wake up with local work ready instead of slamming
+     worker 0 with steal requests. *)
+  let distribute_count = ref 0 in
+  let has_distributed = ref false in
+  
+  iter_typed start_path planner cfg.preserve_timestamps (fun name kind ->
+    if name <> "." && name <> ".." && should_visit cfg planner name then
+      if not (can_skip_stat planner name kind) then
+        let full_path = Filename.concat start_path name in
+        match make_entry ~needs_stat:planner.needs_stat full_path kind with
+        | None -> ()
+        | Some entry ->
+            emit entry; (* Emit top-level files immediately *)
+            let should_recurse = 
+              match cfg.max_depth with
+              | Some max_d -> max_d > 1
+              | None -> true
+            in
+            if should_recurse then
+              match entry.kind with
+              | Dir -> 
+                  let worker_idx = !distribute_count mod concurrency in
+                  Work_pool.push pool worker_idx (full_path, 1);
+                  incr distribute_count;
+                  has_distributed := true
+              | Symlink when cfg.follow_symlinks ->
+                  (match Unix.stat full_path with
+                   | { st_kind = S_DIR; _ } -> 
+                       let worker_idx = !distribute_count mod concurrency in
+                       Work_pool.push pool worker_idx (full_path, 1);
+                       incr distribute_count;
+                       has_distributed := true
+                   | _ -> ()
+                   | exception _ -> ())
+              | _ -> ()
+  );
+
+  (* If root was empty or no dirs found, wake up worker 0 just to exit cleanly.
+     (Though we did process everything above, we need the pool to terminate cleanly.) *)
+  if not !has_distributed then
+    Work_pool.push pool 0 (start_path, 0);
 
   let rec worker_loop id =
     (* 1. Try local pop *)

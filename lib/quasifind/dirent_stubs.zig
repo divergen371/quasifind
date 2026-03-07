@@ -222,15 +222,21 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
 
     var count: usize = 0; // entries that passed the filter
     var scanned: usize = 0; // total readdir() calls this batch
+
+    // Release OCaml lock for the entire batch scanning process.
+    // This removes the massive overhead of toggling the domain lock
+    // on every single raw readdir() call.
+    c.caml_enter_blocking_section();
+
     while (count < BATCH_MAX and scanned < SCAN_MAX) {
-        c.caml_enter_blocking_section();
         set_errno(0);
         const entry = c.readdir(dh.dir);
-        c.caml_leave_blocking_section();
         scanned += 1;
 
         if (entry == null) {
             if (get_errno() != 0) {
+                // If readdir failed, we must re-acquire lock before raising exceptions
+                c.caml_leave_blocking_section();
                 c.uerror("readdir", c.Nothing);
                 unreachable;
             }
@@ -255,18 +261,24 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
             c.DT_UNKNOWN => 0,
             else => 4,
         };
+
+        // strdup is safe to call without OCaml lock because it uses libc malloc
         const dup_name = c.strdup(d_name);
         if (dup_name == null) {
             // Free already allocated strings and fail
             for (results_arr[0..count]) |res| {
                 c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
             }
+            c.caml_leave_blocking_section();
             c.caml_failwith("strdup failed in readdir_batch");
             unreachable;
         }
         results_arr[count] = .{ .name = dup_name, .kind = kind };
         count += 1;
     }
+
+    // Re-acquire OCaml lock before allocating OCaml values
+    c.caml_leave_blocking_section();
 
     if (count == 0) {
         return c.Atom(0); // empty array in OCaml is Atom(0)
