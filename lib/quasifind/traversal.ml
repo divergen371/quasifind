@@ -278,22 +278,29 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
             Atomic.incr pool.idle_count;
             
             (* Check strictly: If all workers are idle, we are done. *)
-            while not (Atomic.get pool.shutdown) do
-               if Atomic.get pool.idle_count = pool.concurrency then (
-                 Atomic.set pool.shutdown true
-               ) else (
-                 (* Busy wait / Yield. In Eio, yield. *)
-                 Eio.Fiber.yield ();
-                 (* Retry steal periodically just in case *)
-                 match Work_pool.attempt_steal pool id 0 with
-                 | Some task -> 
-                     Atomic.decr pool.idle_count;
-                     process_task id task
-                     (* Break loop by recursion? No, process_task loops back. *)
-                 | None -> ()
-               )
-            done;
-            (* Shutdown check again to exit loop implies return unit *)
+            let rec wait_loop spins =
+              if Atomic.get pool.shutdown then ()
+              else if Atomic.get pool.idle_count = pool.concurrency then (
+                Atomic.set pool.shutdown true
+              ) else (
+                (* Staged Backoff: 
+                   1. For a short time, just cpu_relax (ultra light spin)
+                   2. Then start yielding to Eio event loop (allows IPC/I/O on same domain) *)
+                if spins < 100 then (
+                  Domain.cpu_relax ();
+                ) else (
+                  Eio.Fiber.yield ();
+                );
+                
+                match Work_pool.attempt_steal pool id 0 with
+                | Some task -> 
+                    Atomic.decr pool.idle_count;
+                    process_task id task
+                | None -> wait_loop (spins + 1)
+              )
+            in
+            wait_loop 0;
+            (* We only exit wait_loop if shutdown is true *)
             ()
 
   and process_task id (dir_path, depth) =
