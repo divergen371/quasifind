@@ -28,14 +28,41 @@
   daemon
   art
   fsevents
-  formatter)
+  formatter
+  zig_poc)
  (libraries angstrom re eio eio_main yojson str saturn)
- (foreign_stubs
-  (language c)
-  (names dirent_stubs search_stubs fsevents_stubs))
+ (foreign_archives zig_poc dirent_stubs search_stubs fsevents_stubs)
  (c_library_flags
   (-framework CoreServices))
  (preprocess
   (pps ppx_deriving.show ppx_deriving.eq)))
 
 (include_subdirs unqualified)
+
+(rule
+ (targets libzig_poc.a dllzig_poc.so)
+ (deps quasifind/zig_poc.zig)
+ (action
+  (bash
+   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=zig_poc.o && ar rcs libzig_poc.a zig_poc.o && zig cc -target aarch64-macos -shared -o dllzig_poc.so zig_poc.o -Wl,-undefined,dynamic_lookup")))
+
+(rule
+ (targets libdirent_stubs.a dlldirent_stubs.so)
+ (deps quasifind/dirent_stubs.zig)
+ (action
+  (bash
+   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=dirent_stubs.o && ar rcs libdirent_stubs.a dirent_stubs.o && zig cc -target aarch64-macos -shared -o dlldirent_stubs.so dirent_stubs.o -Wl,-undefined,dynamic_lookup")))
+
+(rule
+ (targets libsearch_stubs.a dllsearch_stubs.so)
+ (deps quasifind/search_stubs.zig)
+ (action
+  (bash
+   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=search_stubs.o && ar rcs libsearch_stubs.a search_stubs.o && zig cc -target aarch64-macos -shared -o dllsearch_stubs.so search_stubs.o -Wl,-undefined,dynamic_lookup")))
+
+(rule
+ (targets libfsevents_stubs.a dllfsevents_stubs.so)
+ (deps quasifind/fsevents_stubs.zig)
+ (action
+  (bash
+   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=fsevents_stubs.o && ar rcs libfsevents_stubs.a fsevents_stubs.o && zig cc -target aarch64-macos -shared -o dllfsevents_stubs.so fsevents_stubs.o -Wl,-undefined,dynamic_lookup --sysroot $(xcrun --show-sdk-path) -F $(xcrun --show-sdk-path)/System/Library/Frameworks -framework CoreServices -framework CoreFoundation")))

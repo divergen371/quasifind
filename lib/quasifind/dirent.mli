@@ -1,6 +1,6 @@
 (** Directory Traversal and Type Reading.
 
-    This module provides efficient bindings to C stubs for reading directory 
+    This module provides efficient bindings to Zig FFI stubs for reading directory 
     entries along with their file types (`d_type`), avoiding the need for 
     separate `stat` calls during filesystem traversal. *)
 
@@ -15,13 +15,13 @@ type kind =
 (** [readdir path] reads the directory at [path] and returns a list of 
     tuples containing the entry name and its [kind].
     
-    This uses a C stub to read `d_type` directly from `dirent`. *)
+    This uses a Zig FFI stub to read `d_type` directly from `dirent`. *)
 val readdir : string -> (string * kind) list
 
 (** [iter_batch path f] iterates over the entries in the directory at [path],
     calling the function [f name kind] for each entry.
     
-    This uses a highly optimized C stub to read directory entries in batches
+    This uses a highly optimized Zig FFI stub to read directory entries in batches
     into a pre-allocated buffer, significantly reducing the overhead of 
-    crossing the OCaml/C boundary. *)
-val iter_batch : string -> (string -> kind -> unit) -> unit
+    crossing the OCaml/Zig boundary. *)
+val iter_batch : ?prefixes:string array -> ?suffixes:string array -> string -> (string -> kind -> unit) -> unit

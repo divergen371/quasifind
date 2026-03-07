@@ -22,6 +22,8 @@ type plan = {
   start_path : string;
   name_filter : (string -> bool) option;
   needs_stat : bool;
+  prefixes : string array;
+  suffixes : string array;
 }
 
 module Planner = struct
@@ -55,10 +57,55 @@ module Planner = struct
     in
     aux expr
 
+  let extract_prefixes (expr : Typed.expr) : string array =
+    let rec aux acc = function
+      | And (e1, e2) -> aux (aux acc e1) e2
+      (* Exact matches are added to both prefixes and suffixes. 
+         This works because iter_batch filters by checking if the name 
+         matches AT LEAST ONE prefix AND AT LEAST ONE suffix.
+         If 'foo.txt' is in both, a name 'foo.txt' will match both conditions.
+         While slightly indirect, it avoids adding a separate exact-match array to the C FFI. *)
+      | Name (StrEq s) -> s :: acc
+      | _ -> acc
+    in
+    Array.of_list (aux [] expr)
+
+  let try_extract_suffix (s: string) : string option =
+    if String.ends_with ~suffix:"$" s then
+      let len = String.length s in
+      let rec find_literal idx acc =
+        if idx < 0 then Some acc
+        else match s.[idx] with
+        | '.' when idx >= 1 && s.[idx-1] = '\\' ->
+            find_literal (idx - 2) ("." ^ acc)
+        | 'a'..'z' | 'A'..'Z' | '0'..'9' | '_' | '-' ->
+            find_literal (idx - 1) (String.make 1 s.[idx] ^ acc)
+        | _ ->
+            if acc = "" || acc.[0] <> '.' then None else Some acc
+      in
+      find_literal (len - 2) ""
+    else None
+
+  let extract_suffixes (expr : Typed.expr) : string array =
+    let rec aux acc = function
+      | And (e1, e2) -> aux (aux acc e1) e2
+      (* See extract_prefixes: StrEq is added to both arrays to enforce an exact match 
+         without needing a dedicated exact_matches array in the FFI. *)
+      | Name (StrEq s) -> s :: acc
+      | Name (StrRe (s, _)) ->
+          (match try_extract_suffix s with
+           | Some suf -> suf :: acc
+           | None -> acc)
+      | _ -> acc
+    in
+    Array.of_list (aux [] expr)
+
   let plan expr =
     { start_path = extract_start_path expr;
       name_filter = extract_name_filter expr;
-      needs_stat = Eval.requires_metadata expr }
+      needs_stat = Eval.requires_metadata expr;
+      prefixes = extract_prefixes expr;
+      suffixes = extract_suffixes expr; }
 end
 
 let should_visit (cfg : config) (planner : plan) (name : string) : bool =
@@ -91,9 +138,9 @@ let with_timestamps_preserved path preserve f =
     f ()
 
 (* Helper to read directory entries with type using batch iterator *)
-let iter_typed dir_path preserve f =
+let iter_typed dir_path (planner: plan) preserve f =
   with_timestamps_preserved dir_path preserve (fun () ->
-    try Dirent.iter_batch dir_path f
+    try Dirent.iter_batch ~prefixes:planner.prefixes ~suffixes:planner.suffixes dir_path f
     with Unix.Unix_error (e, _, _) ->
         Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path (Unix.error_message e)
   )
@@ -142,7 +189,7 @@ let visit (cfg : config) (planner : plan) depth emit dir_path =
     match cfg.max_depth with
     | Some max_d when depth >= max_d -> ()
     | _ ->
-        iter_typed dir_path cfg.preserve_timestamps (fun name kind ->
+        iter_typed dir_path planner cfg.preserve_timestamps (fun name kind ->
              if name <> "." && name <> ".." && should_visit cfg planner name then
                if can_skip_stat planner name kind then () (* OPTIMIZATION: Skip lstat *)
                else
@@ -259,7 +306,7 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
 
 
        if should_process then
-         iter_typed dir_path cfg.preserve_timestamps (fun name kind ->
+         iter_typed dir_path planner cfg.preserve_timestamps (fun name kind ->
            if name <> "." && name <> ".." && should_visit cfg planner name then
              if can_skip_stat planner name kind then ()
              else
