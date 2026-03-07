@@ -307,6 +307,7 @@ module TUI = struct
              let q = state'.query in
              let len = String.length q in
              let new_q = if len > 0 then String.sub q 0 (len - 1) else q in
+             (* Query got shorter → filtered set may EXPAND → must re-scan orig_candidates. *)
              let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state'.orig_candidates in
              (* Selection changed: invalidate preview cache *)
              aux { state' with query = new_q; filtered = new_filtered;
@@ -339,7 +340,11 @@ module TUI = struct
                  aux { state' with selected_idx = sel; scroll_offset = scroll }
              else if code >= 32 && code <= 126 then
                let new_q = state'.query ^ String.make 1 c in
-               let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state'.orig_candidates in
+               (* Query got longer → filtered set can only SHRINK (subsequence property).
+                  Re-rank only within the current filtered list instead of all orig_candidates.
+                  This turns O(N_orig) into O(N_filtered) for each addchar, which compounds
+                  to O(N_filtered_after_k_chars) ≪ O(N_orig) as the query grows. *)
+               let new_filtered = Fuzzy_matcher.rank ~query:new_q ~candidates:state'.filtered in
                (* Query changed: invalidate preview cache *)
                aux { state' with query = new_q; filtered = new_filtered;
                                  selected_idx = 0; scroll_offset = 0;
