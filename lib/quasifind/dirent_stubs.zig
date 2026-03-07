@@ -203,14 +203,31 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
         unreachable;
     };
 
-    var results_arr: [1000]struct { name: [*c]const u8, kind: c_int } = undefined;
+    // Batch sizing policy
+    //
+    // BATCH_MAX: Maximum number of *filter-passing* entries returned per call.
+    //   Smaller batches yield control to OCaml (and its GC) more frequently,
+    //   but increase FFI call overhead.  1000 is a sweet spot that keeps each
+    //   batch under ~40 KB of OCaml heap and typically completes in < 1 ms.
+    //
+    // SCAN_MAX: Maximum number of *raw* readdir() calls per batch, regardless
+    //   of how many entries pass the prefix/suffix filter.  Without this cap,
+    //   a highly sparse directory (e.g. 1M entries, only 2 .jpg files) would
+    //   block the OCaml GC for the entire duration of a single batch call.
+    //   When SCAN_MAX is reached we return the partial batch; the caller loops.
+    const BATCH_MAX: usize = 1000;
+    const SCAN_MAX: usize = 4000; // never read more than 4× the batch size raw
 
-    var count: usize = 0;
-    while (count < 1000) { // Keep batch sizes reasonable to avoid blocking GC too long
+    var results_arr: [BATCH_MAX]struct { name: [*c]const u8, kind: c_int } = undefined;
+
+    var count: usize = 0; // entries that passed the filter
+    var scanned: usize = 0; // total readdir() calls this batch
+    while (count < BATCH_MAX and scanned < SCAN_MAX) {
         c.caml_enter_blocking_section();
         set_errno(0);
         const entry = c.readdir(dh.dir);
         c.caml_leave_blocking_section();
+        scanned += 1;
 
         if (entry == null) {
             if (get_errno() != 0) {
