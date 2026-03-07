@@ -73,7 +73,3 @@
 (test
  (name test_qerror)
  (libraries quasifind alcotest str))
-
-(executable
- (name test_zig)
- (libraries quasifind))
