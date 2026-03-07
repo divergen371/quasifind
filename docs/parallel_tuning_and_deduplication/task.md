@@ -23,3 +23,8 @@
   - [x] `Double_val` のアライメント安全性向上 (`memcpy`)。
   - [x] 内部マクロ (`Wosize_val`) の依存性ドキュメント化。
   - [x] `main` ブランチへのマージとリモートプッシュ。
+
+- [x] **Phase 6: 並列スレッド数の自動最適化 (Auto-Capping Parallelism)**
+  - [x] CLI オプション `-j N` を `-j` / `--parallel` フラグに変更。
+  - [x] `Domain.recommended_domain_count()` を基準とした最適な並列数を自動算出。
+  - [x] macOS 環境 (Darwin) を検知し、VFS ロック競合を防ぐため最大スレッド数を 4 にキャップするロジックの実装。

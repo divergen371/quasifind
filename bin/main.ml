@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jobs exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden parallel_mode exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode =
   if help_short then `Help (`Auto, None)
   else (
   
@@ -42,7 +42,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden jobs exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden parallel_mode exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -58,7 +58,20 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
         let domain_mgr = Eio.Stdenv.domain_mgr env in
         let spawn_fn = fun f -> Eio.Domain_manager.run domain_mgr f in
         
-        let concurrency = match jobs with | None -> 1 | Some n -> n in
+        let is_macos = 
+          let ic = Unix.open_process_in "uname -s" in
+          let os = try input_line ic with End_of_file -> "" in
+          ignore (Unix.close_process_in ic);
+          String.trim os = "Darwin"
+        in
+        
+        let concurrency = 
+          if not parallel_mode then 1
+          else
+            let num_cores = Domain.recommended_domain_count () in
+            if is_macos then min num_cores 4 (* Cap at 4 on macOS to prevent VFS lock contention *)
+            else num_cores
+        in
         let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
         let ignore_patterns = config.ignore @ exclude in
         let ignore_re = List.map (fun p -> Re.Glob.glob p |> Re.compile) ignore_patterns in
@@ -129,8 +142,8 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden jo
              
              if use_daemon then (
                (* Warn about ignored options in daemon mode *)
-               if Option.is_some jobs then
-                 Printf.eprintf "[Warning] -j/--jobs is ignored in daemon mode (daemon uses its own parallelism)\n%!";
+               if parallel_mode then
+                 Printf.eprintf "[Warning] -j/--parallel is ignored in daemon mode (daemon uses its own parallelism)\n%!";
                if Option.is_some max_depth then
                  Printf.eprintf "[Warning] -d/--max-depth is ignored in daemon mode\n%!";
                if follow_symlinks then
@@ -390,7 +403,7 @@ let expr_str = Arg.(value & pos 1 (some string) None & info [] ~docv:"EXPR" ~doc
 let max_depth = Arg.(value & opt (some int) None & info ["max-depth"; "d"] ~docv:"DEPTH" ~doc:"Maximum depth to traverse.")
 let follow_symlinks = Arg.(value & flag & info ["follow"; "L"] ~doc:"Follow symbolic links.")
 let include_hidden = Arg.(value & flag & info ["hidden"; "H"] ~doc:"Include hidden files and directories.")
-let jobs = Arg.(value & opt (some int) None & info ["jobs"; "j"] ~docv:"JOBS" ~doc:"Number of parallel jobs.")
+let parallel_mode = Arg.(value & flag & info ["parallel"; "j"] ~doc:"Enable parallel search mode (automatically scales threads optimally).")
 let exec_command = Arg.(value & opt (some string) None & info ["exec"; "x"] ~docv:"CMD" ~doc:"Execute command per file.")
 let exec_batch_command = Arg.(value & opt (some string) None & info ["exec-batch"; "X"] ~docv:"CMD" ~doc:"Execute command batch.")
 let exclude = Arg.(value & opt_all string [] & info ["exclude"; "E"] ~docv:"PATTERN" ~doc:"Exclude files matching pattern (glob). Can be specified multiple times.")
@@ -432,7 +445,7 @@ let daemon_info = Cmd.info "daemon"
 
 let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ jobs $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 

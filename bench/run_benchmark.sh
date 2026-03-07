@@ -124,7 +124,7 @@ hyperfine \
     --command-name "quasifind" \
         "$QUASIFIND $BASE_DIR 'name =~ /[0-9]\\.jpg\$/'" \
     --command-name "quasifind (parallel)" \
-        "$QUASIFIND -j 8 $BASE_DIR 'name =~ /[0-9]\\.jpg\$/'" \
+        "$QUASIFIND -j $BASE_DIR 'name =~ /[0-9]\\.jpg\$/'" \
     --command-name "quasifind (daemon)" \
         "$QUASIFIND $BASE_DIR 'name =~ /[0-9]\\.jpg\$/' --daemon" \
     --command-name "find" \
