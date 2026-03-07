@@ -269,7 +269,6 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
      This way, all workers wake up with local work ready instead of slamming
      worker 0 with steal requests. *)
   let distribute_count = ref 0 in
-  let has_distributed = ref false in
   
   iter_typed start_path planner cfg.preserve_timestamps (fun name kind ->
     if name <> "." && name <> ".." && should_visit cfg planner name then
@@ -289,24 +288,17 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
               | Dir -> 
                   let worker_idx = !distribute_count mod concurrency in
                   Work_pool.push pool worker_idx (full_path, 1);
-                  incr distribute_count;
-                  has_distributed := true
-              | Symlink when cfg.follow_symlinks ->
+                  incr distribute_count
+               | Symlink when cfg.follow_symlinks ->
                   (match Unix.stat full_path with
                    | { st_kind = S_DIR; _ } -> 
                        let worker_idx = !distribute_count mod concurrency in
                        Work_pool.push pool worker_idx (full_path, 1);
-                       incr distribute_count;
-                       has_distributed := true
+                       incr distribute_count
                    | _ -> ()
                    | exception _ -> ())
               | _ -> ()
   );
-
-  (* If root was empty or no dirs found, wake up worker 0 just to exit cleanly.
-     (Though we did process everything above, we need the pool to terminate cleanly.) *)
-  if not !has_distributed then
-    Work_pool.push pool 0 (start_path, 0);
 
   let rec worker_loop id =
     (* 1. Try local pop *)
