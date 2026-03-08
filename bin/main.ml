@@ -10,6 +10,9 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
   (* Self Integrity Check *)
   if ls_mode then (
     let bulk_res = Dirent.readdir_bulk root_dir in
+    Array.sort (fun (n1, _, _, _, _, _, _) (n2, _, _, _, _, _, _) ->
+      String.compare (String.lowercase_ascii n1) (String.lowercase_ascii n2)
+    ) bulk_res;
     
     let format_mode mode kind =
       let rwxrwxrwx = [
