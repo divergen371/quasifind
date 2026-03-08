@@ -482,9 +482,11 @@ alias qh='print -z $(quasifind history -e)'
 
 ## テスト
 
-テストは [Alcotest](https://github.com/mirage/alcotest) と [QCheck](https://github.com/c-cube/qcheck) (Property-Based Testing) を使用しています。
+テストは OCaml ネイティブのユニットテスト・プロパティベーステストフレームワーク（[Alcotest](https://github.com/mirage/alcotest), [QCheck](https://github.com/c-cube/qcheck)）に加えて、CLI としての使い勝手と E2E 動作を担保するために **Cram テスト (`.t` 拡張子)** を全面的に採用しています。
 
 ### テスト実行
+
+Dune が OCaml のユニットテストと Cram テストの両方を自動的に検出して実行・照合します。
 
 ```bash
 dune runtest
@@ -492,26 +494,28 @@ dune runtest
 
 ### テストカバレッジ
 
-| モジュール            | テストタイプ           | テスト数       |
-| --------------------- | ---------------------- | -------------- |
-| Parser/Typecheck/Eval | ユニットテスト         | 6              |
-| Entropy               | ユニットテスト         | 2              |
-| Traversal             | ユニットテスト         | 4              |
-| Content               | ユニットテスト         | 2              |
-| Ghost                 | モックテスト           | 3              |
-| Rules                 | ユニットテスト         | 5              |
-| Suspicious            | ユニットテスト         | 4              |
-| Exec                  | ユニットテスト         | 4              |
-| Profile               | JSON往復テスト         | 2              |
-| History               | JSON往復テスト         | 3              |
-| Config                | JSON往復テスト         | 3              |
-| RuleConverter         | ユニットテスト         | 3              |
-| Interactive           | ユニット + スモーク    | 4              |
-| Watcher               | ユニット + スモーク    | 6              |
-| **ART (Daemon)**      | ユニットテスト         | 5              |
-| **VFS (Daemon)**      | ユニットテスト         | 5              |
-| **IPC (Daemon)**      | ユニットテスト         | 5              |
-| Size/Time Props       | プロパティベーステスト | 2 (2000ケース) |
+| モジュール             | テストタイプ           | 状態               | テスト数 / 備考                                                    |
+| ---------------------- | ---------------------- | ------------------ | ------------------------------------------------------------------ |
+| Parser/Typecheck/Eval  | ユニットテスト         | :white_check_mark: | 6件                                                                |
+| Entropy                | ユニットテスト         | :white_check_mark: | 2件                                                                |
+| Traversal              | ユニットテスト         | :white_check_mark: | 4件                                                                |
+| Content                | ユニットテスト         | :white_check_mark: | 2件                                                                |
+| Ghost                  | モックテスト           | :white_check_mark: | 3件                                                                |
+| Rules                  | ユニットテスト         | :white_check_mark: | 5件                                                                |
+| Suspicious             | ユニットテスト         | :white_check_mark: | 4件                                                                |
+| Exec                   | ユニットテスト         | :white_check_mark: | 4件                                                                |
+| Profile                | JSON往復テスト         | :white_check_mark: | 2件                                                                |
+| History                | JSON往復テスト         | :white_check_mark: | 3件                                                                |
+| Config                 | JSON往復テスト         | :white_check_mark: | 3件                                                                |
+| RuleConverter          | ユニットテスト         | :white_check_mark: | 3件                                                                |
+| Interactive            | ユニット + スモーク    | :white_check_mark: | 4件                                                                |
+| Watcher                | ユニット + スモーク    | :white_check_mark: | 6件                                                                |
+| **ART (Daemon)**       | ユニットテスト         | :white_check_mark: | 5件                                                                |
+| **VFS (Daemon)**       | ユニットテスト         | :white_check_mark: | 5件                                                                |
+| **IPC (Daemon)**       | ユニットテスト         | :white_check_mark: | 5件                                                                |
+| Size/Time Props        | プロパティベーステスト | :white_check_mark: | 2件 (計2000生成ケース)                                             |
+| **CLI Usability**      | **Cram E2E テスト** 🆕 | :white_check_mark: | 引数、除外、深さ制限、DSL演算子の総合動作等のスナップショット      |
+| **Bulk Scan (`--ls`)** | **Cram E2E テスト** 🆕 | :white_check_mark: | macOS `getattrlistbulk` やファイルシステム直接呼び出しと出力を検証 |
 
 **注**: **スモークテスト** はシステム依存の関数（`is_available`, `is_atty`, 通知関数など）に対して、クラッシュしないことのみを確認するテストです。実際の戻り値や副作用は検証していません。
 
