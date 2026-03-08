@@ -10,16 +10,52 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
   (* Self Integrity Check *)
   if ls_mode then (
     let bulk_res = Dirent.readdir_bulk root_dir in
+    
+    let format_mode mode kind =
+      let rwxrwxrwx = [
+        (0o400, 'r'); (0o200, 'w'); (0o100, 'x');
+        (0o040, 'r'); (0o020, 'w'); (0o010, 'x');
+        (0o004, 'r'); (0o002, 'w'); (0o001, 'x');
+      ] in
+      let chars = List.map (fun (mask, ch) -> if mode land mask <> 0 then ch else '-') rwxrwxrwx in
+      let kind_ch = match kind with
+        | Dirent.Dir -> 'd'
+        | Dirent.Symlink -> 'l'
+        | _ -> '.'
+      in
+      String.make 1 kind_ch ^ String.of_seq (List.to_seq chars)
+    in
+    
+    let format_size size =
+      if size < 0 then "? B"
+      else if size < 1024 then Printf.sprintf "%d B" size
+      else if size < 1024 * 1024 then Printf.sprintf "%.1f KB" (float_of_int size /. 1024.)
+      else if size < 1024 * 1024 * 1024 then Printf.sprintf "%.1f MB" (float_of_int size /. 1048576.)
+      else Printf.sprintf "%.1f GB" (float_of_int size /. 1073741824.)
+    in
+
+    let get_user_name uid = try (Unix.getpwuid uid).pw_name with Not_found -> string_of_int uid in
+    let get_group_name gid = try (Unix.getgrgid gid).gr_name with Not_found -> string_of_int gid in
+
+    let format_time mtime =
+      if mtime < 0 then "Unknown date"
+      else
+        let tm = Unix.localtime (float_of_int mtime) in
+        let months = [|"Jan"; "Feb"; "Mar"; "Apr"; "May"; "Jun"; "Jul"; "Aug"; "Sep"; "Oct"; "Nov"; "Dec"|] in
+        let wdays = [|"Sun"; "Mon"; "Tue"; "Wed"; "Thu"; "Fri"; "Sat"|] in
+        Printf.sprintf "%s %s %2d %02d:%02d:%02d %d" 
+          wdays.(tm.tm_wday) months.(tm.tm_mon) tm.tm_mday tm.tm_hour tm.tm_min tm.tm_sec (tm.tm_year + 1900)
+    in
+
     let len = Array.length bulk_res in
     for i = 0 to len - 1 do
-      let (name, kind, size, mtime) = Array.unsafe_get bulk_res i in
-      let kind_str = match kind with
-        | Dirent.Dir -> "d"
-        | Dirent.Reg -> "f"
-        | Dirent.Symlink -> "l"
-        | _ -> "?"
-      in
-      Printf.printf "%s\t%s\t%d\t%d\n" name kind_str size mtime
+      let (name, kind, size, mtime, mode, uid, gid) = Array.unsafe_get bulk_res i in
+      let mode_str = format_mode mode kind in
+      let size_str = format_size size in
+      let time_str = format_time mtime in
+      let user = get_user_name uid in
+      let group = get_group_name gid in
+      Printf.printf "%s %-8s %-8s %7s  %s  %s\n" mode_str user group size_str time_str name
     done;
     `Ok ()
   ) else if integrity then (

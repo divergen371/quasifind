@@ -332,21 +332,22 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
 
     const BATCH_MAX: usize = 1000;
     const SCAN_MAX: usize = 4000;
-    var results_arr: [BATCH_MAX]struct { name: [*c]const u8, kind: c_int, size: isize, mtime: isize } = undefined;
+    var results_arr: [BATCH_MAX]struct { name: [*c]const u8, kind: c_int, size: isize, mtime: isize, mode: c_int, uid: c_int, gid: c_int } = undefined;
     var count: usize = 0;
     var scanned: usize = 0;
 
     c.caml_enter_blocking_section();
 
+    const fd = c.dirfd(dh.dir);
+
     if (builtin.os.tag == .macos) {
         var attrList: c.struct_attrlist = undefined;
         @memset(std.mem.asBytes(&attrList), 0);
         attrList.bitmapcount = c.ATTR_BIT_MAP_COUNT;
-        attrList.commonattr = c.ATTR_CMN_RETURNED_ATTRS | c.ATTR_CMN_ERROR | c.ATTR_CMN_NAME | c.ATTR_CMN_OBJTYPE | c.ATTR_CMN_MODTIME;
+        attrList.commonattr = c.ATTR_CMN_RETURNED_ATTRS | c.ATTR_CMN_ERROR | c.ATTR_CMN_NAME | c.ATTR_CMN_OBJTYPE | c.ATTR_CMN_MODTIME | c.ATTR_CMN_OWNERID | c.ATTR_CMN_GRPID | c.ATTR_CMN_ACCESSMASK;
         attrList.fileattr = c.ATTR_FILE_TOTALSIZE;
 
         var attrBuf: [32768]u8 = undefined;
-        const fd = c.dirfd(dh.dir);
 
         while (count < BATCH_MAX and scanned < SCAN_MAX) {
             const bulk_count = c.getattrlistbulk(fd, &attrList, &attrBuf, attrBuf.len, 0);
@@ -389,6 +390,24 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
                     offset += 16;
                 }
 
+                var owner: u32 = 0;
+                if ((commonattr & c.ATTR_CMN_OWNERID) != 0) {
+                    owner = std.mem.readInt(u32, ptr[offset..][0..4], builtin.cpu.arch.endian());
+                    offset += 4;
+                }
+
+                var group: u32 = 0;
+                if ((commonattr & c.ATTR_CMN_GRPID) != 0) {
+                    group = std.mem.readInt(u32, ptr[offset..][0..4], builtin.cpu.arch.endian());
+                    offset += 4;
+                }
+
+                var access_mask: u32 = 0;
+                if ((commonattr & c.ATTR_CMN_ACCESSMASK) != 0) {
+                    access_mask = std.mem.readInt(u32, ptr[offset..][0..4], builtin.cpu.arch.endian());
+                    offset += 4;
+                }
+
                 var file_size: u64 = 0;
                 if ((fileattr & c.ATTR_FILE_TOTALSIZE) != 0) {
                     file_size = std.mem.readInt(u64, ptr[offset..][0..8], builtin.cpu.arch.endian());
@@ -414,7 +433,7 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
                     c.caml_failwith("strdup failed");
                     unreachable;
                 }
-                results_arr[count] = .{ .name = dup_name, .kind = kind, .size = @intCast(file_size), .mtime = @intCast(mod_time) };
+                results_arr[count] = .{ .name = dup_name, .kind = kind, .size = @intCast(file_size), .mtime = @intCast(mod_time), .mode = @intCast(access_mask), .uid = @intCast(owner), .gid = @intCast(group) };
                 count += 1;
             }
         }
@@ -444,6 +463,21 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
                 else => 4,
             };
 
+            var st: c.struct_stat = undefined;
+            var s_size: isize = 0;
+            var s_mtime: isize = 0;
+            var s_mode: c_int = 0;
+            var s_uid: c_int = 0;
+            var s_gid: c_int = 0;
+
+            if (c.fstatat(fd, d_name, &st, c.AT_SYMLINK_NOFOLLOW) == 0) {
+                s_size = @intCast(st.st_size);
+                s_mtime = @intCast(st.st_mtime);
+                s_mode = @intCast(st.st_mode);
+                s_uid = @intCast(st.st_uid);
+                s_gid = @intCast(st.st_gid);
+            }
+
             const dup_name = c.strdup(d_name);
             if (dup_name == null) {
                 for (results_arr[0..count]) |res| c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
@@ -451,7 +485,7 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
                 c.caml_failwith("strdup failed");
                 unreachable;
             }
-            results_arr[count] = .{ .name = dup_name, .kind = kind, .size = -1, .mtime = -1 };
+            results_arr[count] = .{ .name = dup_name, .kind = kind, .size = s_size, .mtime = s_mtime, .mode = s_mode, .uid = s_uid, .gid = s_gid };
             count += 1;
         }
     }
@@ -471,7 +505,7 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
         c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
 
         c.caml_register_global_root(&str_val);
-        const tuple = c.caml_alloc(4, 0);
+        const tuple = c.caml_alloc(7, 0);
         c.caml_remove_global_root(&str_val);
 
         const p_tuple = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(tuple))));
@@ -479,6 +513,9 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
         p_tuple[1] = Val_int(res.kind);
         p_tuple[2] = Val_long(res.size);
         p_tuple[3] = Val_long(res.mtime);
+        p_tuple[4] = Val_int(res.mode);
+        p_tuple[5] = Val_int(res.uid);
+        p_tuple[6] = Val_int(res.gid);
 
         const p_arr = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(ocaml_arr))));
         p_arr[i] = tuple;
