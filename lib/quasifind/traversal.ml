@@ -156,7 +156,7 @@ let can_skip_stat (planner : plan) (name : string) (kind : Dirent.kind) =
       | None -> false
 
 (* Create entry from path, returning Option for error handling *)
-let make_entry ?(needs_stat=true) path (kind_hint : Dirent.kind) : Eval.entry option =
+let make_entry ?(needs_stat=true) path (kind_hint : Dirent.kind) (size_hint : int) (mtime_hint : int) : Eval.entry option =
   (* If metadata is not needed and kind is known, skip lstat *)
   if not needs_stat && kind_hint <> Dirent.Unknown then
     let kind = match kind_hint with
@@ -168,6 +168,15 @@ let make_entry ?(needs_stat=true) path (kind_hint : Dirent.kind) : Eval.entry op
     let name = Filename.basename path in
     (* Return dummy metadata. Queries relying on this must have set needs_stat=true *)
     Some { Eval.name; path; kind; size = 0L; mtime = 0.0; perm = 0 }
+  else if size_hint >= 0 && kind_hint <> Dirent.Unknown then
+    let kind = match kind_hint with
+      | Dirent.Reg -> Ast.File
+      | Dirent.Dir -> Ast.Dir
+      | Dirent.Symlink -> Ast.Symlink
+      | _ -> Ast.File
+    in
+    let name = Filename.basename path in
+    Some { Eval.name; path; kind; size = Int64.of_int size_hint; mtime = float_of_int mtime_hint; perm = 0 }
   else
     match Unix.lstat path with
     | stats ->
@@ -189,12 +198,12 @@ let visit (cfg : config) (planner : plan) depth emit dir_path =
     match cfg.max_depth with
     | Some max_d when depth >= max_d -> ()
     | _ ->
-        iter_typed dir_path planner cfg.preserve_timestamps (fun name kind ->
+        iter_typed dir_path planner cfg.preserve_timestamps (fun name kind size mtime ->
              if name <> "." && name <> ".." && should_visit cfg planner name then
                if can_skip_stat planner name kind then () (* OPTIMIZATION: Skip lstat *)
                else
                  let full_path = Filename.concat dir_path name in
-                 match make_entry ~needs_stat:planner.needs_stat full_path kind with
+                 match make_entry ~needs_stat:planner.needs_stat full_path kind size mtime with
                  | None -> ()
                  | Some entry ->
                      emit entry;
@@ -270,11 +279,11 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
      worker 0 with steal requests. *)
   let distribute_count = ref 0 in
   
-  iter_typed start_path planner cfg.preserve_timestamps (fun name kind ->
+  iter_typed start_path planner cfg.preserve_timestamps (fun name kind size mtime ->
     if name <> "." && name <> ".." && should_visit cfg planner name then
       if not (can_skip_stat planner name kind) then
         let full_path = Filename.concat start_path name in
-        match make_entry ~needs_stat:planner.needs_stat full_path kind with
+        match make_entry ~needs_stat:planner.needs_stat full_path kind size mtime with
         | None -> ()
         | Some entry ->
             emit entry; (* Emit top-level files immediately *)
@@ -348,12 +357,12 @@ let traverse_parallel ~concurrency (cfg : config) (planner : plan) emit start_pa
 
 
        if should_process then
-         iter_typed dir_path planner cfg.preserve_timestamps (fun name kind ->
+         iter_typed dir_path planner cfg.preserve_timestamps (fun name kind size mtime ->
            if name <> "." && name <> ".." && should_visit cfg planner name then
              if can_skip_stat planner name kind then ()
              else
                let full_path = Filename.concat dir_path name in
-               match make_entry ~needs_stat:planner.needs_stat full_path kind with
+               match make_entry ~needs_stat:planner.needs_stat full_path kind size mtime with
                | None -> ()
                | Some entry ->
                    emit entry;
