@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
 - **Directory Traversal**: Replaced `seekdir` with a pending entry cache for robust batch reading.
 - **Security**: Removed dangerous and unstable "Stealth Mode" (process masking).
 
+## [1.1.0] - 2026-03-09
+
+### Added
+
+- `--ls` (or `--list`) flag to output full directory contents and metadata instantly bypassing the query engine, optimized through macOS `getattrlistbulk` (with Linux `fstatat` fallback) for future integration with GUI file managers.
+
 ## [1.0.1] - 2026-02-03
 
 ### Fixes

@@ -501,7 +501,7 @@ let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
 let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode $ ls_mode))
 
-let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
+let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.1.0"
 
 (* History args *)
 let history_exec = Arg.(value & flag & info ["exec"; "e"] ~doc:"Select and output a command from history to stdout.")
