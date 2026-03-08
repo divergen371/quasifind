@@ -38,11 +38,68 @@
 - **ユースケース**:
   `{"cmd": "search_interactive", "query": "rpt23 pdf"}` （デーモン側の `--interactive` 相当のファジーエンジンを作動）
 
-## 4. UI 連携とリアルタイム同期要件
+## 4. 通信プロトコル仕様 (Daemon - UI IPC Protocol)
 
-1. **TSV / JSON ストリーミング IPC**
-   - バックエンド（quasifindデーモン）から UI への通信は、バッファリングされたストリーミング形式で行う。
-   - 膨大な検索結果を返す際は JSON のシリアライズ/デシリアライズコストを削減するため、TSV（タブ区切り）形式の IPC 通信を検討する。
+UI層（Tauri/フロントエンド）とバックエンド（quasifindデーモン）間の通信は、パケットヘッダ（JSON）とデータストリーム（TSVまたはJSONL）のハイブリッドプロトコルを採用し、極限のスループットを実現する。
+
+### 4.1 基本リクエスト・レスポンスフォーマット
+
+UI からデーモンへのリクエストはシンプルな JSON を用いる。通信基盤には Unix Domain Socket または標準入出力を利用する（Tauri Sidecar の制約を考慮）。
+
+#### [要件1: 瞬間的なフォルダ展開 (Bulk API)]
+
+UI 側でフォルダを開いたときのリクエスト。
+
+```json
+{
+  "cmd": "list_dir",
+  "path": "/Users/atsushi/Documents",
+  "options": { "show_hidden": true, "sort_by": "mtime_desc" }
+}
+```
+
+**レスポンスストリーム (TSV形式)**: JSONのパース負荷をゼロにするため、タブ区切りでUI（WebView）に直接流し込む。
+
+```text
+STATUS: OK\n
+NAME\tTYPE\tSIZE\tMTIME\tPERM\n
+report.pdf\tfile\t1024500\t1708819200\t644\n
+images\tdir\t4096\t1708801200\t755\n
+...
+```
+
+#### [要件2: インクリメンタル・ファジー検索]
+
+ユーザーが検索窓に `rpt23 pdf` と打ち込んだ瞬間のストリーム通信。
+
+```json
+{
+  "cmd": "search_interactive",
+  "query": "rpt23 pdf",
+  "cwd": "/Users/atsushi/",
+  "limit": 100
+}
+```
+
+**レスポンスストリーム (JSONL形式)**: 動的なメタデータやハイライト位置を持たせるため。
+
+```json
+{"path": "/Users/atsushi/Documents/report_Q3_2023.pdf", "score": 98, "matches": [18, 19, 20]}
+{"path": "/Users/atsushi/Downloads/old_rpt_2023.pdf", "score": 75, "matches": [...]}
+```
+
+### 4.2 fsevents / inotify によるリアルタイム同期
+
+デーモンは OS のファイルシステムイベントを監視し、サーバーからの Push 型通知（UI側はリスナー）としてリアルタイムに変更を通知する。
+
+```json
+{
+  "event": "fs_watch",
+  "action": "CREATE",
+  "path": "/Users/atsushi/Documents/new_file.txt",
+  "meta": { "size": 0, "mtime": ... }
+}
+```
 
 2. **fsevents (macOS) / inotify (Linux) による監視**
    - デーモンは、現在 UI で開かれている（表示されている）ディレクトリツリーを OS レベルのイベントで監視する。
@@ -61,8 +118,17 @@
 3. **高度な一括リネーム (Batch Rename)**
    - 正規表現や連番、Exif メタデータ（撮影日など）を利用した高度なリネーム。
    - バックエンドの Zig レイヤーにある高速な正規表現エンジンを活用し、プレビューを数ミリ秒で UI に返す。
-4. **ターミナル統合**
-   - パネルの一部にターミナルを埋め込み、カレントディレクトリとターミナルの状態（`cd`コマンドなど）を双方向で同期する。
+4. **非同期ファイル・オペレーションキュー (Operations Queue)**
+   - ファイルのコピー・移動・削除などをメインプロセスから切り離し、専用のバックグラウンド・タスクキューで非同期処理する機能。
+   - 巨大ファイル移動中も、UI は一切フリーズせずブラウジングを継続可能。並行して走る複数タスクの進捗（プログレスバー）を独立した一つのウィンドウ/パネルで統括表示する。
+5. **ディスク使用量ビジュアライザ (Size Browser)**
+   - DaisyDisk のような、ディレクトリごとのサイズを算出してツリーマップ / 円グラフで可視化する機能。
+   - `quasifind` の `lstat` 高速巡回を用いて、TB（テラバイト）級のディスクのサイズ計算を数秒で完了し、即座に UI にレンダリングする。
+6. **Git ステータス直接統合 (Git Integration)**
+   - 開発者向け機能。リストビューの各行にそのまま、現在の Git ブランチ、変更状態（M, A, D 等）、および `.gitignore` の反映状態をシームレスに表示する。
+7. **内蔵 Hex エディタ / クイックルック (Advanced Preview/Hex Editor)**
+   - ファイルを外部アプリで開かずにパネル内で瞬時にプレビューする機構。
+   - バイナリファイル選択時は、メモリ効率の良い内蔵 Hex エディタへ自動で切り替える。
 
 ## 6. AI 時代に最適化したインテリジェンス要件 (AI-Native Features)
 
