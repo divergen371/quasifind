@@ -1,9 +1,15 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
 const c = @cImport({
     @cInclude("sys/types.h");
     @cInclude("dirent.h");
     @cInclude("string.h");
     @cInclude("errno.h");
+    if (builtin.os.tag == .macos) {
+        @cInclude("sys/attr.h");
+        @cInclude("unistd.h");
+    }
     @cInclude("caml/mlvalues.h");
     @cInclude("caml/memory.h");
     @cInclude("caml/alloc.h");
@@ -43,6 +49,11 @@ inline fn Int_val(v: c.value) c_int {
 
 inline fn Val_int(i: c_int) c.value {
     const unsigned_i: usize = @bitCast(@as(isize, i));
+    return @as(c.value, @bitCast((unsigned_i << 1) | 1));
+}
+
+inline fn Val_long(i: isize) c.value {
+    const unsigned_i: usize = @bitCast(i);
     return @as(c.value, @bitCast((unsigned_i << 1) | 1));
 }
 
@@ -303,6 +314,171 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
         const p_tuple = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(tuple))));
         p_tuple[0] = str_val;
         p_tuple[1] = Val_int(res.kind);
+
+        const p_arr = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(ocaml_arr))));
+        p_arr[i] = tuple;
+    }
+
+    c.caml_remove_global_root(&ocaml_arr);
+    return ocaml_arr;
+}
+
+export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
+    const dh = customVal(v_dir);
+    if (dh.dir == null) {
+        c.caml_failwith("Directory already closed");
+        unreachable;
+    }
+
+    const BATCH_MAX: usize = 1000;
+    const SCAN_MAX: usize = 4000;
+    var results_arr: [BATCH_MAX]struct { name: [*c]const u8, kind: c_int, size: isize, mtime: isize } = undefined;
+    var count: usize = 0;
+    var scanned: usize = 0;
+
+    c.caml_enter_blocking_section();
+
+    if (builtin.os.tag == .macos) {
+        var attrList: c.struct_attrlist = undefined;
+        @memset(std.mem.asBytes(&attrList), 0);
+        attrList.bitmapcount = c.ATTR_BIT_MAP_COUNT;
+        attrList.commonattr = c.ATTR_CMN_RETURNED_ATTRS | c.ATTR_CMN_ERROR | c.ATTR_CMN_NAME | c.ATTR_CMN_OBJTYPE | c.ATTR_CMN_MODTIME;
+        attrList.fileattr = c.ATTR_FILE_TOTALSIZE;
+
+        var attrBuf: [32768]u8 = undefined;
+        const fd = c.dirfd(dh.dir);
+
+        while (count < BATCH_MAX and scanned < SCAN_MAX) {
+            const bulk_count = c.getattrlistbulk(fd, &attrList, &attrBuf, attrBuf.len, 0);
+            if (bulk_count == -1) break;
+            if (bulk_count == 0) break;
+
+            var ptr: [*]u8 = &attrBuf;
+            var i: usize = 0;
+            while (i < @as(usize, @intCast(bulk_count)) and count < BATCH_MAX and scanned < SCAN_MAX) : (i += 1) {
+                scanned += 1;
+                const length = std.mem.readInt(u32, ptr[0..4], builtin.cpu.arch.endian());
+                const commonattr = std.mem.readInt(u32, ptr[4..8], builtin.cpu.arch.endian());
+                const fileattr = std.mem.readInt(u32, ptr[16..20], builtin.cpu.arch.endian());
+
+                var offset: usize = 4 + (5 * 4);
+                if ((commonattr & c.ATTR_CMN_ERROR) != 0) {
+                    ptr += length;
+                    continue;
+                }
+
+                var name_slice: []const u8 = "";
+                if ((commonattr & c.ATTR_CMN_NAME) != 0) {
+                    const dataoffset = std.mem.readInt(u32, ptr[offset..][0..4], builtin.cpu.arch.endian());
+                    const namelen = std.mem.readInt(u32, ptr[offset + 4 ..][0..4], builtin.cpu.arch.endian());
+                    const name_start = offset + dataoffset;
+                    const actual_len = if (namelen > 0) namelen - 1 else 0;
+                    name_slice = ptr[name_start .. name_start + actual_len];
+                    offset += 8;
+                }
+
+                var obj_type: u32 = 0;
+                if ((commonattr & c.ATTR_CMN_OBJTYPE) != 0) {
+                    obj_type = std.mem.readInt(u32, ptr[offset..][0..4], builtin.cpu.arch.endian());
+                    offset += 4;
+                }
+
+                var mod_time: i64 = 0;
+                if ((commonattr & c.ATTR_CMN_MODTIME) != 0) {
+                    mod_time = std.mem.readInt(i64, ptr[offset..][0..8], builtin.cpu.arch.endian());
+                    offset += 16;
+                }
+
+                var file_size: u64 = 0;
+                if ((fileattr & c.ATTR_FILE_TOTALSIZE) != 0) {
+                    file_size = std.mem.readInt(u64, ptr[offset..][0..8], builtin.cpu.arch.endian());
+                    offset += 8;
+                }
+
+                ptr += length;
+
+                const d_name = @as([*c]const u8, @ptrCast(name_slice.ptr));
+                if (c.strcmp(d_name, ".") == 0 or c.strcmp(d_name, "..") == 0) continue;
+
+                const kind: c_int = switch (obj_type) {
+                    1 => 1, // VREG
+                    2 => 2, // VDIR
+                    5 => 3, // VLNK
+                    else => 4,
+                };
+
+                const dup_name = c.strdup(d_name);
+                if (dup_name == null) {
+                    for (results_arr[0..count]) |res| c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
+                    c.caml_leave_blocking_section();
+                    c.caml_failwith("strdup failed");
+                    unreachable;
+                }
+                results_arr[count] = .{ .name = dup_name, .kind = kind, .size = @intCast(file_size), .mtime = @intCast(mod_time) };
+                count += 1;
+            }
+        }
+    } else {
+        while (count < BATCH_MAX and scanned < SCAN_MAX) {
+            set_errno(0);
+            const entry = c.readdir(dh.dir);
+            scanned += 1;
+            if (entry == null) {
+                if (get_errno() != 0) {
+                    c.caml_leave_blocking_section();
+                    c.uerror("readdir", c.Nothing);
+                    unreachable;
+                }
+                break;
+            }
+
+            const e = entry.?.*;
+            const d_name = @as([*c]const u8, @ptrCast(&e.d_name));
+            if (c.strcmp(d_name, ".") == 0 or c.strcmp(d_name, "..") == 0) continue;
+
+            const kind: c_int = switch (e.d_type) {
+                c.DT_REG => 1,
+                c.DT_DIR => 2,
+                c.DT_LNK => 3,
+                c.DT_UNKNOWN => 0,
+                else => 4,
+            };
+
+            const dup_name = c.strdup(d_name);
+            if (dup_name == null) {
+                for (results_arr[0..count]) |res| c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
+                c.caml_leave_blocking_section();
+                c.caml_failwith("strdup failed");
+                unreachable;
+            }
+            results_arr[count] = .{ .name = dup_name, .kind = kind, .size = -1, .mtime = -1 };
+            count += 1;
+        }
+    }
+
+    c.caml_leave_blocking_section();
+
+    if (count == 0) return c.Atom(0);
+
+    const ocaml_arr_orig = c.caml_alloc(@intCast(count), 0);
+    var ocaml_arr: c.value = ocaml_arr_orig;
+    c.caml_register_global_root(&ocaml_arr);
+
+    const results = results_arr[0..count];
+    for (results, 0..) |res, i| {
+        const str_val_orig = c.caml_copy_string(res.name);
+        var str_val: c.value = str_val_orig;
+        c.free(@as(?*anyopaque, @ptrCast(@constCast(res.name))));
+
+        c.caml_register_global_root(&str_val);
+        const tuple = c.caml_alloc(4, 0);
+        c.caml_remove_global_root(&str_val);
+
+        const p_tuple = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(tuple))));
+        p_tuple[0] = str_val;
+        p_tuple[1] = Val_int(res.kind);
+        p_tuple[2] = Val_long(res.size);
+        p_tuple[3] = Val_long(res.mtime);
 
         const p_arr = @as([*c]c.value, @ptrFromInt(@as(usize, @bitCast(ocaml_arr))));
         p_arr[i] = tuple;

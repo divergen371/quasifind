@@ -3,12 +3,26 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden parallel_mode exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden parallel_mode exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode ls_mode =
   if help_short then `Help (`Auto, None)
   else (
   
   (* Self Integrity Check *)
-  if integrity then (
+  if ls_mode then (
+    let bulk_res = Dirent.readdir_bulk root_dir in
+    let len = Array.length bulk_res in
+    for i = 0 to len - 1 do
+      let (name, kind, size, mtime) = Array.unsafe_get bulk_res i in
+      let kind_str = match kind with
+        | Dirent.Dir -> "d"
+        | Dirent.Reg -> "f"
+        | Dirent.Symlink -> "l"
+        | _ -> "?"
+      in
+      Printf.printf "%s\t%s\t%d\t%d\n" name kind_str size mtime
+    done;
+    `Ok ()
+  ) else if integrity then (
     let my_path = Sys.executable_name in
     let cmd = Printf.sprintf "shasum -a 256 '%s' 2>/dev/null | awk '{print $1}'" my_path in
     let ic = Unix.open_process_in cmd in
@@ -42,7 +56,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden parallel_mode exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden parallel_mode exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode ls_mode
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -427,6 +441,7 @@ let help_short = Arg.(value & flag & info ["h"] ~doc:"Show this help.")
 let output_format = Arg.(value & opt string "default" & info ["format"; "f"] ~docv:"FORMAT" ~doc:"Output format: default, json, csv, table, null.")
 let color_mode = Arg.(value & opt string "auto" & info ["color"] ~docv:"MODE" ~doc:"Color mode: always, auto, never.")
 let interactive_mode = Arg.(value & flag & info ["interactive"; "i"] ~doc:"Interactive mode: use fuzzy finder to select a single result.")
+let ls_mode = Arg.(value & flag & info ["ls"; "list"] ~doc:"Bulk list directory contents rapidly (file manager mode).")
 
 (* --- Daemon Command (Experimental) --- *)
 let daemon_info = Cmd.info "daemon" 
@@ -445,7 +460,7 @@ let daemon_info = Cmd.info "daemon"
 
 let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode $ ls_mode))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.0.1"
 

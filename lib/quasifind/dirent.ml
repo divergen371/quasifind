@@ -13,6 +13,9 @@ external closedir : dir_handle -> unit = "caml_closedir"
 (* Batch reading interface with built-in prefix/suffix filtering *)
 external readdir_batch : dir_handle -> string array -> string array -> (string * kind) array = "caml_readdir_batch"
 
+(* Bulk stat reading interface for full directory listing without filtering *)
+external readdir_bulk_stat : dir_handle -> (string * kind * int * int) array = "caml_readdir_bulk_stat"
+
 (* Iterator for batch entries *)
 let iter_batch ?(prefixes=[||]) ?(suffixes=[||]) (path : string) (f : string -> kind -> unit) =
   let h = opendir path in
@@ -40,3 +43,13 @@ let readdir path =
     acc := (name, kind) :: !acc
   );
   List.rev !acc
+
+let readdir_bulk path =
+  let h = opendir path in
+  try
+    let res = readdir_bulk_stat h in
+    closedir h;
+    res
+  with exn ->
+    closedir h;
+    raise exn

@@ -25,3 +25,12 @@ val readdir : string -> (string * kind) list
     into a pre-allocated buffer, significantly reducing the overhead of 
     crossing the OCaml/Zig boundary. *)
 val iter_batch : ?prefixes:string array -> ?suffixes:string array -> string -> (string -> kind -> unit) -> unit
+
+(** [readdir_bulk path] immediately fetches all directory entries including their
+    metadata (size, mtime) directly from the OS in a single bulk operation 
+    (where supported, e.g. getattrlistbulk on macOS).
+    
+    This is highly optimized for GUI file manager listing where full metadata
+    of all entries must be loaded instantaneously, without sequential stat calls.
+    Returns an array of tuples: (name, kind, size_in_bytes, mtime_seconds). *)
+val readdir_bulk : string -> (string * kind * int * int) array
