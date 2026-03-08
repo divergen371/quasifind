@@ -42,7 +42,8 @@ inline fn Int_val(v: c.value) c_int {
 }
 
 inline fn Val_int(i: c_int) c.value {
-    return @as(c.value, @bitCast((@as(isize, i) << 1) | 1));
+    const unsigned_i: usize = @bitCast(@as(isize, i));
+    return @as(c.value, @bitCast((unsigned_i << 1) | 1));
 }
 
 inline fn set_errno(val: c_int) void {
