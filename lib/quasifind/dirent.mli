@@ -25,4 +25,4 @@ val readdir : string -> (string * kind * int * int) list
     This uses a highly optimized Zig FFI stub to read directory entries in batches
     into a pre-allocated buffer, significantly reducing the overhead of 
     crossing the OCaml/Zig boundary. *)
-val iter_batch : ?prefixes:string array -> ?suffixes:string array -> string -> (string -> kind -> int -> int -> unit) -> unit
+val iter_batch : ?prefixes:string array -> ?suffixes:string array -> needs_stat:bool -> string -> (string -> kind -> int -> int -> unit) -> unit

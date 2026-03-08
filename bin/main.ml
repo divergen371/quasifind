@@ -59,10 +59,19 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
         let spawn_fn = fun f -> Eio.Domain_manager.run domain_mgr f in
         
 
+        let is_macos = 
+          let ic = Unix.open_process_in "uname -s" in
+          let os = try input_line ic with End_of_file -> "" in
+          ignore (Unix.close_process_in ic);
+          String.trim os = "Darwin"
+        in
         
         let concurrency = 
           if not parallel_mode then 1
-          else Domain.recommended_domain_count ()
+          else
+            let num_cores = Domain.recommended_domain_count () in
+            if is_macos then min num_cores 4 (* Cap at 4 on macOS to prevent VFS lock contention *)
+            else num_cores
         in
         let strategy = if concurrency > 1 then Traversal.Parallel concurrency else Traversal.DFS in
         let ignore_patterns = config.ignore @ exclude in

@@ -48,11 +48,13 @@ inline fn Int_val(v: c.value) c_int {
 }
 
 inline fn Val_int(i: c_int) c.value {
-    return @as(c.value, @bitCast((@as(isize, i) << 1) | 1));
+    const unsigned_i: usize = @bitCast(@as(isize, i));
+    return @as(c.value, @bitCast((unsigned_i << 1) | 1));
 }
 
 inline fn Val_long(i: isize) c.value {
-    return @as(c.value, @bitCast((@as(isize, i) << 1) | 1));
+    const unsigned_i: usize = @bitCast(i);
+    return @as(c.value, @bitCast((unsigned_i << 1) | 1));
 }
 
 inline fn set_errno(val: c_int) void {
@@ -192,12 +194,14 @@ fn matches_suffix(name: [*c]const u8, suffixes: [][*c]const u8) bool {
     return false;
 }
 
-export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.value) c.value {
+export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.value, v_needs_stat: c.value) c.value {
     const dh = customVal(v_dir);
     if (dh.dir == null) {
         c.caml_failwith("Directory already closed");
         unreachable;
     }
+
+    const needs_stat = c.Bool_val(v_needs_stat) != 0;
 
     // FixedBufferAllocator is incredibly fast and avoids system allocator overhead
     var temp_buf: [32768]u8 = undefined;
@@ -235,7 +239,7 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
 
     c.caml_enter_blocking_section();
 
-    if (builtin.os.tag == .macos) {
+    if (builtin.os.tag == .macos and needs_stat) {
         var attrList: c.struct_attrlist = undefined;
         @memset(std.mem.asBytes(&attrList), 0);
         attrList.bitmapcount = c.ATTR_BIT_MAP_COUNT;

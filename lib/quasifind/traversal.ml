@@ -140,7 +140,7 @@ let with_timestamps_preserved path preserve f =
 (* Helper to read directory entries with type using batch iterator *)
 let iter_typed dir_path (planner: plan) preserve f =
   with_timestamps_preserved dir_path preserve (fun () ->
-    try Dirent.iter_batch ~prefixes:planner.prefixes ~suffixes:planner.suffixes dir_path f
+    try Dirent.iter_batch ~prefixes:planner.prefixes ~suffixes:planner.suffixes ~needs_stat:planner.needs_stat dir_path f
     with Unix.Unix_error (e, _, _) ->
         Printf.eprintf "[Warning] Cannot read directory %s: %s\n%!" dir_path (Unix.error_message e)
   )
