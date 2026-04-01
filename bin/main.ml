@@ -3,7 +3,7 @@ open Quasifind
 
 (* --- Search Command --- *)
 
-let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden parallel_mode exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode ls_mode =
+let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden parallel_mode exec_command exec_batch_command exclude profile_name save_profile_name watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules integrity daemon_mode help_short output_format color_mode interactive_mode ls_mode name_opt iname_opt ext_opt type_opt size_opt mtime_opt content_opt =
   if help_short then `Help (`Auto, None)
   else (
   
@@ -95,7 +95,7 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
            let actual_follow = follow_symlinks || profile.follow_symlinks in
            let actual_hidden = include_hidden || profile.include_hidden in
            let actual_exclude = profile.exclude @ exclude in
-           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden parallel_mode exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode ls_mode
+           search actual_root (Some actual_expr) actual_depth actual_follow actual_hidden parallel_mode exec_command exec_batch_command actual_exclude None None watch_mode watch_interval watch_log webhook_url email_addr slack_url suspicious_mode update_rules check_ghost reset_config reset_rules false false false output_format color_mode interactive_mode ls_mode None None None None None None None
       )
   | None ->
       (* Prepare configuration and runner *)
@@ -303,17 +303,86 @@ let rec search root_dir expr_str_opt max_depth follow_symlinks include_hidden pa
         `Ok ()
       in
 
-      match expr_str_opt with
+      let final_expr_str_opt = 
+        let components = ref [] in
+        let escape_regex s =
+          let buf = Buffer.create (String.length s * 2) in
+          String.iter (function
+            | '*' -> Buffer.add_string buf ".*"
+            | '?' -> Buffer.add_char buf '.'
+            | '.' | '+' | '(' | ')' | '[' | ']' | '^' | '$' | '\\' | '|' as c -> 
+                Buffer.add_char buf '\\'; Buffer.add_char buf c
+            | c -> Buffer.add_char buf c) s;
+          Buffer.contents buf
+        in
+        
+        (match name_opt with
+         | Some p -> components := Printf.sprintf "name =~ /^%s$/" (escape_regex p) :: !components
+         | None -> ());
+         
+        (match iname_opt with
+         | Some p -> components := Printf.sprintf "name =~ /(?i)^%s$/" (escape_regex p) :: !components
+         | None -> ());
+         
+        (match ext_opt with
+         | Some e ->
+             let e_clean = if String.starts_with ~prefix:"." e then String.sub e 1 (String.length e - 1) else e in
+             (* Use RegexLiteral to bypass quoted_string's backslash stripping issues *)
+             components := Printf.sprintf "name =~ /.*\\.%s$/" (escape_regex e_clean) :: !components
+         | None -> ());
+         
+        (match type_opt with
+         | Some "f" | Some "file" -> components := "type == file" :: !components
+         | Some "d" | Some "dir" -> components := "type == dir" :: !components
+         | Some "l" | Some "symlink" -> components := "type == symlink" :: !components
+         | Some t -> Printf.eprintf "[Warning] unknown type '%s' (use f, d, or l)\n%!" t
+         | None -> ());
+         
+        let needs_type_file = ref false in
+        
+        (match size_opt with
+         | Some s ->
+             needs_type_file := true;
+             if String.starts_with ~prefix:"+" s then
+               components := Printf.sprintf "size > %s" (String.sub s 1 (String.length s - 1)) :: !components
+             else if String.starts_with ~prefix:"-" s then
+               components := Printf.sprintf "size < %s" (String.sub s 1 (String.length s - 1)) :: !components
+             else
+               components := Printf.sprintf "size == %s" s :: !components
+         | None -> ());
+
+        (match mtime_opt with
+         | Some m ->
+             if String.starts_with ~prefix:"+" m then
+               components := Printf.sprintf "mtime > %s" (String.sub m 1 (String.length m - 1)) :: !components
+             else if String.starts_with ~prefix:"-" m then
+               components := Printf.sprintf "mtime < %s" (String.sub m 1 (String.length m - 1)) :: !components
+             else
+               components := Printf.sprintf "mtime == %s" m :: !components
+         | None -> ());
+
+        (match content_opt with
+         | Some c ->
+             needs_type_file := true;
+             components := Printf.sprintf "content =~ \"%s\"" c :: !components
+         | None -> ());
+
+        if !needs_type_file && type_opt = None then
+          components := "type == file" :: !components;
+          
+        match List.rev !components, expr_str_opt with
+        | [], None -> None
+        | [], Some e -> Some e
+        | cs, None -> Some (String.concat " && " cs)
+        | cs, Some e -> Some ("(" ^ String.concat " && " cs ^ ") && (" ^ e ^ ")")
+      in
+
+      match final_expr_str_opt with
       | None -> 
           if check_ghost && not suspicious_mode then
-             (* Check ghost only mode - no file search needed typically, or scan all? *)
-             (* Ideally we don't start traversal if only check_ghost, but structure assumes traversal. *)
-             (* We can create a dummy AST "false" to skip traversal or just validly run empty search. *)
-             (* Better: run logic with "false" (match nothing) so we only get ghosts. *)
              run_logic Ast.Typed.False
           else if not suspicious_mode then `Help (`Auto, None) 
           else
-             (* Suspicious mode without explicit expr -> use suspicious rules *)
              let untyped_ast = Suspicious.rules () in
              (match Typecheck.check untyped_ast with
               | Error err -> `Error (false, "Type Error (Suspicious Rules): " ^ Qerror.to_string err)
@@ -452,7 +521,16 @@ let run_history_preview line =
 
 (* Shared args for search *)
 let root_dir = Arg.(value & pos 0 string "." & info [] ~docv:"DIR" ~doc:"Root directory to search.")
-let expr_str = Arg.(value & pos 1 (some string) None & info [] ~docv:"EXPR" ~doc:"DSL expression. Required unless -h is used.")
+let expr_str = Arg.(value & pos 1 (some string) None & info [] ~docv:"EXPR" ~doc:"DSL expression. Optional if flags like -n or -s are used.")
+
+(* Syntax sugar flags *)
+let name_opt = Arg.(value & opt (some string) None & info ["name"; "n"] ~docv:"PATTERN" ~doc:"Search by filename glob pattern.")
+let iname_opt = Arg.(value & opt (some string) None & info ["iname"] ~docv:"PATTERN" ~doc:"Case-insensitive search by filename glob pattern.")
+let ext_opt = Arg.(value & opt (some string) None & info ["ext"; "e"] ~docv:"EXT" ~doc:"Search by extension (e.g., txt or .txt).")
+let type_opt = Arg.(value & opt (some string) None & info ["type"; "t"] ~docv:"TYPE" ~doc:"File type: f (file), d (dir), l (symlink).")
+let size_opt = Arg.(value & opt (some string) None & info ["size"; "s"] ~docv:"SIZE" ~doc:"Search by size (+1MB, -1KB). Implicitly filters for files.")
+let mtime_opt = Arg.(value & opt (some string) None & info ["mtime"; "m"] ~docv:"TIME" ~doc:"Search by modification time (-7d, +1M).")
+let content_opt = Arg.(value & opt (some string) None & info ["content"; "c"] ~docv:"REGEX" ~doc:"Search file content matches regex. Implicitly filters for files.")
 let max_depth = Arg.(value & opt (some int) None & info ["max-depth"; "d"] ~docv:"DEPTH" ~doc:"Maximum depth to traverse.")
 let follow_symlinks = Arg.(value & flag & info ["follow"; "L"] ~doc:"Follow symbolic links.")
 let include_hidden = Arg.(value & flag & info ["hidden"; "H"] ~doc:"Include hidden files and directories.")
@@ -499,7 +577,7 @@ let daemon_info = Cmd.info "daemon"
 
 let daemon_t = Term.(const (fun () -> Daemon.run ~root:".") $ const ())
 
-let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode $ ls_mode))
+let search_t = Term.(ret (const search $ root_dir $ expr_str $ max_depth $ follow_symlinks $ include_hidden $ parallel_mode $ exec_command $ exec_batch_command $ exclude $ profile_name $ save_profile_name $ watch_mode $ watch_interval $ watch_log $ webhook_url $ email_addr $ slack_url $ suspicious_mode $ update_rules $ check_ghost $ reset_config $ reset_rules $ integrity $ daemon_mode $ help_short $ output_format $ color_mode $ interactive_mode $ ls_mode $ name_opt $ iname_opt $ ext_opt $ type_opt $ size_opt $ mtime_opt $ content_opt))
 
 let search_info = Cmd.info "quasifind" ~doc:"Quasi-find: a typed, find-like filesystem query tool" ~version:"1.1.0"
 

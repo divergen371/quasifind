@@ -40,25 +40,29 @@ let float_p =
 let quoted_string =
   let escaped =
     char '\\' *> any_char >>| function
-    | 'n' -> '\n'
-    | 't' -> '\t'
-    | 'r' -> '\r'
-    | c -> c
+    | 'n' -> "\\n"
+    | 't' -> "\\t"
+    | 'r' -> "\\r"
+    | '"' -> "\""
+    | '\\' -> "\\"
+    | c -> "\\" ^ String.make 1 c
   in
-  let normal = satisfy (fun c -> c <> '"' && c <> '\\') in
+  let normal = satisfy (fun c -> c <> '"' && c <> '\\') >>| String.make 1 in
   lex
     ( char '"' *> many (escaped <|> normal) <* char '"' >>| fun cs ->
-      String.of_seq (List.to_seq cs) )
+      String.concat "" cs )
 
 let regex_literal =
   (* /.../ ; supports escaped \/ *)
-  let escaped = char '\\' *> any_char >>| fun c -> Some c in
-  let normal = satisfy (fun c -> c <> '/' && c <> '\\') >>| fun c -> Some c in
+  let escaped = char '\\' *> any_char >>| function
+    | '/' -> "/"
+    | '\\' -> "\\"
+    | c -> "\\" ^ String.make 1 c
+  in
+  let normal = satisfy (fun c -> c <> '/' && c <> '\\') >>| String.make 1 in
   let piece =
     many (escaped <|> normal) >>| fun xs ->
-    let buf = Buffer.create 32 in
-    List.iter (function None -> () | Some c -> Buffer.add_char buf c) xs;
-    Buffer.contents buf
+    String.concat "" xs
   in
   lex (char '/' *> piece <* char '/')
 

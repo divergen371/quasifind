@@ -262,8 +262,12 @@ export fn caml_readdir_batch(v_dir: c.value, v_prefixes: c.value, v_suffixes: c.
         if (c.strcmp(d_name, ".") == 0 or c.strcmp(d_name, "..") == 0) continue;
 
         // Perform AST Push-Down optimizations (Zero-allocation filtering)
-        if (!matches_prefix(d_name, prefixes)) continue;
-        if (!matches_suffix(d_name, suffixes)) continue;
+        // Only apply to regular files. Directories and symlinks must be returned 
+        // to OCaml to allow recursive traversal or symlink following.
+        if (e.*.d_type == c.DT_REG) {
+            if (!matches_prefix(d_name, prefixes)) continue;
+            if (!matches_suffix(d_name, suffixes)) continue;
+        }
 
         // Passed filter
         const kind: c_int = switch (e.*.d_type) {
