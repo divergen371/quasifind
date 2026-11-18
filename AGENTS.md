@@ -23,3 +23,17 @@
 1. **`zig cc` における `--sysroot` と `-F` の併用注意**:
    - `zig cc` に `--sysroot $(xcrun --show-sdk-path)` を渡す際、Zig 0.17 は `-F` のパスに対して自動的に `--sysroot` を前置する。
    - そのため、`-F $(xcrun --show-sdk-path)/System/Library/Frameworks` ではなく、必ず `-F /System/Library/Frameworks` を指定すること（二重パス化によるフレームワーク未検出を防ぐため）。
+
+## 4. Git / PR / CI / Pullfrog レビュー運用規約
+1. **`main` への直接 push 禁止（branch → PR 徹底）**:
+   - 変更は作業ブランチ上で実装し、Pull Request 経由で `main` にマージする。`main` への直接 push は禁止する（`.githooks/pre-push` によるローカル抑止、`ALLOW_PUSH_MAIN=1` は明示的な緊急指示時のみ）。
+   - 有効化コマンド: `git config core.hooksPath .githooks`
+2. **品質ゲートとマージ条件**:
+   - PR 作成・更新時は CI（`.github/workflows/ci.yml`: `Quality gate summary`）および Pullfrog 自動レビュー（`.github/workflows/pullfrog.yml`: レビューコメント + `pullfrog-approval` チェック）が実行される。
+   - `Quality gate summary` と `pullfrog-approval` の両方が通過するまでマージしないこと。
+3. **Pullfrog との分業とレビュー対応プロトコル**:
+   - Pullfrog は **reviewer-only**（push / shell 無効、auto-address / fix-CI オフ）として運用する。レビュー指摘への修正はローカルの開発者／エージェントが担当する。
+   - `pullfrog-approval` が失敗（Changes Requested または未解決スレッドあり）となった場合は、別 PR へ逃げず**同一ブランチ**に修正コミットを push し、対応したレビュースレッドを resolve して再レビュー（最後のスレッド resolve または `@pullfrog` メンション）を待つこと。
+   - `pullfrog-approval` が未実行または失敗終了して欠落したままマージしないこと。
+4. **Backlog.md との連携**:
+   - タスクの正本は `backlog/`（`backlog` CLI で管理し、タスク Markdown を直接編集しない）。対応する GitHub Issue（`#1` 等）がある場合は PR 本文に `TASK-N` と `Closes #N` を記載する。
