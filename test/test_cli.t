@@ -1,3 +1,5 @@
+  $ export XDG_CONFIG_HOME="$PWD/cli-config"
+  $ mkdir -p "$XDG_CONFIG_HOME"
   $ mkdir -p test_cli_dir
   $ cd test_cli_dir
 
@@ -14,7 +16,9 @@
   $ ln -s link_target my_symlink
 
   $ quasifind . 'name =~ "target.txt"'
+  Created default config at $TESTCASE_ROOT/cli-config/quasifind/config.json
   ./normal_dir/sub_dir/target.txt
+  $ test -f "$XDG_CONFIG_HOME/quasifind/config.json"
 
   $ quasifind -E ".git" -E "node_modules" . 'size >= 0' | sort
   ./link_target
