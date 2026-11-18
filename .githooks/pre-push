@@ -1,0 +1,12 @@
+#!/bin/sh
+# main への直接 push を遮断する（GitHub free プランやローカル誤操作防止のため、ローカルでも担保する）。
+# 変更は branch → PR を経由し、CI (Quality gate summary) と Pullfrog レビュー (pullfrog-approval) を通す。
+# 緊急脱出: ALLOW_PUSH_MAIN=1 git push origin main
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [ "$remote_ref" = "refs/heads/main" ] && [ "$ALLOW_PUSH_MAIN" != "1" ]; then
+    echo "✗ main への直接 push は禁止です。作業ブランチを切って PR を作成してください (gh pr create)。" >&2
+    echo "  緊急時は ALLOW_PUSH_MAIN=1 git push origin main（明示的な指示がある場合のみ）" >&2
+    exit 1
+  fi
+done
+exit 0
