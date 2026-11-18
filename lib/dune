@@ -57,4 +57,4 @@
  (deps quasifind/fsevents_stubs.zig)
  (action
   (bash
-   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=fsevents_stubs.o && ar rcs libfsevents_stubs.a fsevents_stubs.o && zig cc -target aarch64-macos -shared -o dllfsevents_stubs.so fsevents_stubs.o -Wl,-undefined,dynamic_lookup --sysroot $(xcrun --show-sdk-path) -F $(xcrun --show-sdk-path)/System/Library/Frameworks -framework CoreServices -framework CoreFoundation")))
+   "zig build-obj %{deps} -I $(ocamlc -where) -target aarch64-macos -O ReleaseFast -femit-bin=fsevents_stubs.o && ar rcs libfsevents_stubs.a fsevents_stubs.o && zig cc -target aarch64-macos -shared -o dllfsevents_stubs.so fsevents_stubs.o -Wl,-undefined,dynamic_lookup --sysroot $(xcrun --show-sdk-path) -F /System/Library/Frameworks -framework CoreServices -framework CoreFoundation")))

@@ -15,7 +15,7 @@ depends: [
   "ocaml"
   "re"
   "angstrom"
-  "dune" {>= "3.21"}
+  "dune" {>= "3.25"}
   "eio"
   "eio_main"
   "ppx_deriving"

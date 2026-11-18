@@ -1,19 +1,79 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @cImport({
-    @cInclude("sys/mman.h");
-    @cInclude("sys/stat.h");
-    @cInclude("fcntl.h");
-    @cInclude("unistd.h");
-    @cInclude("regex.h");
-    @cInclude("string.h");
-    @cInclude("caml/mlvalues.h");
-    @cInclude("caml/memory.h");
-    @cInclude("caml/alloc.h");
-    @cInclude("caml/fail.h");
-    @cInclude("caml/unixsupport.h");
-    @cInclude("caml/signals.h");
-});
+const c = struct {
+    pub const value = isize;
+    pub const mlsize_t = usize;
+
+    pub const O_RDONLY: c_int = 0x0000;
+    pub const PROT_READ: c_int = 0x01;
+    pub const MAP_PRIVATE: c_int = 0x0002;
+    pub const MAP_FAILED: ?*anyopaque = @ptrFromInt(std.math.maxInt(usize));
+
+    pub const timespec = extern struct {
+        tv_sec: isize,
+        tv_nsec: isize,
+    };
+
+    pub const struct_stat = extern struct {
+        st_dev: i32,
+        st_mode: u16,
+        st_nlink: u16,
+        st_ino: u64,
+        st_uid: u32,
+        st_gid: u32,
+        st_rdev: i32,
+        st_atimespec: timespec,
+        st_mtimespec: timespec,
+        st_ctimespec: timespec,
+        st_birthtimespec: timespec,
+        st_size: i64,
+        st_blocks: i64,
+        st_blksize: i32,
+        st_flags: u32,
+        st_gen: u32,
+        st_lspare: i32,
+        st_qspare: [2]i64,
+    };
+
+    pub const regoff_t = i64;
+
+    pub const regex_t = extern struct {
+        re_magic: c_int,
+        re_nsub: usize,
+        re_endp: [*c]const u8,
+        re_g: ?*anyopaque,
+    };
+
+    pub const regmatch_t = extern struct {
+        rm_so: regoff_t,
+        rm_eo: regoff_t,
+    };
+
+    pub const REG_EXTENDED: c_int = 0o0001;
+    pub const REG_NOSUB: c_int = 0o0004;
+    pub const REG_NEWLINE: c_int = 0o0010;
+    pub const REG_NOMATCH: c_int = 1;
+    pub const REG_STARTEND: c_int = 0o00004;
+
+    pub extern "c" fn open(path: [*c]const u8, oflag: c_int, ...) c_int;
+    pub extern "c" fn close(fd: c_int) c_int;
+    pub extern "c" fn fstat(fd: c_int, buf: *struct_stat) c_int;
+    pub extern "c" fn mmap(addr: ?*anyopaque, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) ?*anyopaque;
+    pub extern "c" fn munmap(addr: ?*anyopaque, len: usize) c_int;
+
+    pub extern "c" fn regcomp(preg: *regex_t, pattern: [*c]const u8, cflags: c_int) c_int;
+    pub extern "c" fn regexec(preg: *const regex_t, string: [*c]const u8, nmatch: usize, pmatch: [*c]regmatch_t, eflags: c_int) c_int;
+    pub extern "c" fn regfree(preg: *regex_t) void;
+
+    pub extern "c" fn memchr(s: ?*const anyopaque, c_val: c_int, n: usize) ?*anyopaque;
+    pub extern "c" fn memcmp(s1: ?*const anyopaque, s2: ?*const anyopaque, n: usize) c_int;
+    pub extern "c" fn malloc(size: usize) ?*anyopaque;
+    pub extern "c" fn free(ptr: ?*anyopaque) void;
+
+    pub extern "c" fn caml_string_length(v: value) mlsize_t;
+    pub extern "c" fn caml_enter_blocking_section() void;
+    pub extern "c" fn caml_leave_blocking_section() void;
+};
 
 inline fn String_val(v: c.value) [*c]const u8 {
     return @as([*c]const u8, @ptrFromInt(@as(usize, @bitCast(v))));

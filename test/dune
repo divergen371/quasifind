@@ -73,3 +73,6 @@
 (test
  (name test_qerror)
  (libraries quasifind alcotest str))
+
+(cram
+ (deps %{bin:quasifind}))

@@ -1,22 +1,130 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const c = @cImport({
-    @cInclude("sys/types.h");
-    @cInclude("dirent.h");
-    @cInclude("string.h");
-    @cInclude("errno.h");
-    if (builtin.os.tag == .macos) {
-        @cInclude("sys/attr.h");
-        @cInclude("unistd.h");
+const c = struct {
+    pub const value = isize;
+    pub const mlsize_t = usize;
+    pub const tag_t = c_uint;
+
+    pub const Val_unit: value = 1;
+    pub const Nothing: value = 0;
+
+    pub const DIR = opaque {};
+
+    pub const dirent = extern struct {
+        d_ino: u64,
+        d_seekoff: u64,
+        d_reclen: u16,
+        d_namlen: u16,
+        d_type: u8,
+        d_name: [1024]u8,
+    };
+
+    pub const DT_UNKNOWN: u8 = 0;
+    pub const DT_DIR: u8 = 4;
+    pub const DT_REG: u8 = 8;
+    pub const DT_LNK: u8 = 10;
+
+    pub const struct_attrlist = extern struct {
+        bitmapcount: u16,
+        reserved: u16,
+        commonattr: u32,
+        volattr: u32,
+        dirattr: u32,
+        fileattr: u32,
+        forkattr: u32,
+    };
+
+    pub const ATTR_BIT_MAP_COUNT: u16 = 5;
+    pub const ATTR_CMN_NAME: u32 = 0x00000001;
+    pub const ATTR_CMN_OBJTYPE: u32 = 0x00000008;
+    pub const ATTR_CMN_MODTIME: u32 = 0x00000400;
+    pub const ATTR_CMN_OWNERID: u32 = 0x00008000;
+    pub const ATTR_CMN_GRPID: u32 = 0x00010000;
+    pub const ATTR_CMN_ACCESSMASK: u32 = 0x00020000;
+    pub const ATTR_CMN_ERROR: u32 = 0x20000000;
+    pub const ATTR_CMN_RETURNED_ATTRS: u32 = 0x80000000;
+    pub const ATTR_FILE_TOTALSIZE: u32 = 0x00000002;
+
+    pub const timespec = extern struct {
+        tv_sec: isize,
+        tv_nsec: isize,
+    };
+
+    pub const struct_stat = extern struct {
+        st_dev: i32,
+        st_mode: u16,
+        st_nlink: u16,
+        st_ino: u64,
+        st_uid: u32,
+        st_gid: u32,
+        st_rdev: i32,
+        st_atimespec: timespec,
+        st_mtimespec: timespec,
+        st_ctimespec: timespec,
+        st_birthtimespec: timespec,
+        st_size: i64,
+        st_blocks: i64,
+        st_blksize: i32,
+        st_flags: u32,
+        st_gen: u32,
+        st_lspare: i32,
+        st_qspare: [2]i64,
+    };
+
+    pub const AT_SYMLINK_NOFOLLOW: c_int = 0x0020;
+
+    pub const custom_fixed_length = extern struct {
+        bsize_32: isize,
+        bsize_64: isize,
+    };
+
+    pub const custom_operations = extern struct {
+        identifier: [*c]const u8,
+        finalize: ?*const fn (v: value) callconv(.c) void,
+        compare: ?*const anyopaque,
+        hash: ?*const anyopaque,
+        serialize: ?*const anyopaque,
+        deserialize: ?*const anyopaque,
+        compare_ext: ?*const anyopaque,
+        fixed_length: ?*const custom_fixed_length,
+    };
+
+    pub inline fn Data_custom_val(v: value) *anyopaque {
+        const ptr = @as([*]value, @ptrFromInt(@as(usize, @bitCast(v))));
+        return @ptrCast(&ptr[1]);
     }
-    @cInclude("caml/mlvalues.h");
-    @cInclude("caml/memory.h");
-    @cInclude("caml/alloc.h");
-    @cInclude("caml/fail.h");
-    @cInclude("caml/unixsupport.h");
-    @cInclude("caml/custom.h");
-});
+
+    pub inline fn Atom(tag: tag_t) value {
+        return caml_atom(tag);
+    }
+
+    pub extern "c" fn __error() *c_int;
+    pub extern "c" fn opendir(path: [*c]const u8) ?*DIR;
+    pub extern "c" fn closedir(dirp: *DIR) c_int;
+    pub extern "c" fn readdir(dirp: ?*DIR) ?*dirent;
+    pub extern "c" fn dirfd(dirp: ?*DIR) c_int;
+    pub extern "c" fn getattrlistbulk(dirfd: c_int, attrList: *anyopaque, attrBuf: *anyopaque, attrBufSize: usize, options: u64) c_int;
+    pub extern "c" fn fstatat(fd: c_int, path: [*c]const u8, buf: *struct_stat, flag: c_int) c_int;
+
+    pub extern "c" fn strlen(s: [*c]const u8) usize;
+    pub extern "c" fn strcmp(s1: [*c]const u8, s2: [*c]const u8) c_int;
+    pub extern "c" fn strncmp(s1: [*c]const u8, s2: [*c]const u8, n: usize) c_int;
+    pub extern "c" fn strdup(s: [*c]const u8) [*c]u8;
+    pub extern "c" fn free(ptr: ?*anyopaque) void;
+
+    pub extern "c" fn caml_atom(tag: tag_t) value;
+    pub extern "c" fn caml_alloc_custom(ops: *const custom_operations, size: usize, mem: mlsize_t, max: mlsize_t) value;
+    pub extern "c" fn caml_alloc(wosize: mlsize_t, tag: tag_t) value;
+    pub extern "c" fn caml_copy_string(s: [*c]const u8) value;
+    pub extern "c" fn caml_failwith(msg: [*c]const u8) noreturn;
+    pub extern "c" fn caml_uerror(cmdname: [*c]const u8, arg: value) noreturn;
+    pub const uerror = caml_uerror;
+    pub extern "c" fn caml_enter_blocking_section() void;
+    pub extern "c" fn caml_leave_blocking_section() void;
+    pub extern "c" fn caml_register_global_root(r: *value) void;
+    pub extern "c" fn caml_remove_global_root(r: *value) void;
+};
 
 // Explicitly use extern struct to guarantee C ABI compatibility
 const dir_handle_t = extern struct {
@@ -95,12 +203,12 @@ export fn finalize_dir_handle(v_dir: c.value) void {
 var dir_handle_ops = c.custom_operations{
     .identifier = "quasifind.dir_handle",
     .finalize = finalize_dir_handle,
-    .compare = @ptrCast(@alignCast(c.custom_compare_default)),
-    .hash = @ptrCast(@alignCast(c.custom_hash_default)),
-    .serialize = @ptrCast(@alignCast(c.custom_serialize_default)),
-    .deserialize = @ptrCast(@alignCast(c.custom_deserialize_default)),
-    .compare_ext = @ptrCast(@alignCast(c.custom_compare_ext_default)),
-    .fixed_length = @ptrCast(@alignCast(c.custom_fixed_length_default)),
+    .compare = null,
+    .hash = null,
+    .serialize = null,
+    .deserialize = null,
+    .compare_ext = null,
+    .fixed_length = null,
 };
 
 export fn caml_opendir(v_path: c.value) c.value {
@@ -476,7 +584,7 @@ export fn caml_readdir_bulk_stat(v_dir: c.value) c.value {
 
             if (c.fstatat(fd, d_name, &st, c.AT_SYMLINK_NOFOLLOW) == 0) {
                 s_size = @intCast(st.st_size);
-                s_mtime = @intCast(st.st_mtime);
+                s_mtime = @intCast(st.st_mtimespec.tv_sec);
                 s_mode = @intCast(st.st_mode);
                 s_uid = @intCast(st.st_uid);
                 s_gid = @intCast(st.st_gid);

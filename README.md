@@ -539,8 +539,8 @@ dune runtest
 ### 必要要件 (Prerequisites)
 
 - **OS**: macOS (Apple Silicon 推奨)
-- **OCaml**: 5.0.0 以上 (5.2.0 推奨)
-- **Zig**: 0.14 以上 (0.15.x 推奨) — FFI スタブのビルドに必要
+- **OCaml**: 5.0.0 以上 (5.5.2 推奨)
+- **Zig**: 0.14 以上 (0.17.x 推奨) — FFI スタブのビルドに必要
 - **Opam**: OCaml パッケージマネージャ
 - **Dune**: ビルドシステム
 
@@ -559,7 +559,7 @@ opam init -y --shell=zsh
 eval $(opam env)
 
 # 3. OCaml 5.x 環境の作成 (既に最新が入っている場合はスキップ可)
-opam switch create 5.2.0
+opam switch create 5.5.2
 eval $(opam env)
 
 # 4. 依存パッケージのインストールとビルド

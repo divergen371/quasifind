@@ -1,4 +1,4 @@
-(lang dune 3.21)
+(lang dune 3.25)
 
 (name quasifind)
 

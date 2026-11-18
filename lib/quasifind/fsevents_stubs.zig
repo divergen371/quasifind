@@ -1,18 +1,36 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const c = @cImport({
-    if (builtin.os.tag == .macos) {
-        @cInclude("pthread.h");
-        @cInclude("string.h");
-        @cInclude("stdlib.h");
-    }
-    @cInclude("caml/mlvalues.h");
-    @cInclude("caml/memory.h");
-    @cInclude("caml/alloc.h");
-    @cInclude("caml/fail.h");
-    @cInclude("caml/callback.h");
-});
+const c = struct {
+    pub const value = isize;
+    pub const mlsize_t = usize;
+    pub const tag_t = c_uint;
+
+    pub const Val_unit: value = 1;
+    pub const Val_emptylist: value = 1;
+
+    pub const pthread_mutex_t = extern struct {
+        __sig: c_long,
+        __opaque: [56]u8,
+    };
+    pub const pthread_t = ?*anyopaque;
+
+    pub extern "c" fn pthread_mutex_init(mutex: *pthread_mutex_t, attr: ?*const anyopaque) c_int;
+    pub extern "c" fn pthread_mutex_lock(mutex: *pthread_mutex_t) c_int;
+    pub extern "c" fn pthread_mutex_unlock(mutex: *pthread_mutex_t) c_int;
+    pub extern "c" fn pthread_create(thread: *pthread_t, attr: ?*const anyopaque, start_routine: *const fn (?*anyopaque) callconv(.c) ?*anyopaque, arg: ?*anyopaque) c_int;
+    pub extern "c" fn pthread_join(thread: pthread_t, value_ptr: ?*?*anyopaque) c_int;
+
+    pub extern "c" fn strlen(s: [*c]const u8) usize;
+    pub extern "c" fn strdup(s: [*c]const u8) [*c]u8;
+    pub extern "c" fn malloc(size: usize) ?*anyopaque;
+    pub extern "c" fn free(ptr: ?*anyopaque) void;
+    pub extern "c" fn write(fd: c_int, buf: [*c]const u8, nbyte: usize) isize;
+    pub const STDERR_FILENO: c_int = 2;
+
+    pub extern "c" fn caml_alloc(wosize: mlsize_t, tag: tag_t) value;
+    pub extern "c" fn caml_copy_string(s: [*c]const u8) value;
+};
 
 // Manual macOS CoreServices bindings to bypass massive header parse errors in @cImport
 const CFStringRef = ?*anyopaque;
@@ -232,14 +250,14 @@ export fn caml_fsevents_poll(v_unit: c.value) c.value {
                 snap[i] = c.strdup(@ptrCast(&event_buf.paths[event_buf.head]));
                 if (snap[i] == null) {
                     const msg = "[Warning] strdup failed in fsevents_poll: event dropped\n";
-                    _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
+                    _ = c.write(c.STDERR_FILENO, msg.ptr, msg.len);
                 }
                 event_buf.head = (event_buf.head + 1) % MAX_EVENTS;
             }
             event_buf.count = 0;
         } else {
             const msg = "[Warning] malloc failed in fsevents_poll: events dropped\n";
-            _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
+            _ = c.write(c.STDERR_FILENO, msg.ptr, msg.len);
             count = 0;
         }
     }
