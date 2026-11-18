@@ -6,7 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-11-18T13:04:00Z'
-updated_date: '2026-11-18T14:28:00Z'
+updated_date: '2026-11-18T16:10:00Z'
 labels:
   - tests
   - quality
@@ -48,4 +48,6 @@ ordinal: 15000
 - [ ] #1 test_loop_termination から with _ -> () を撤去し、循環リンクで例外なく終了かつ二重走査しないことを検証すること
 - [ ] #2 Formatter, Dirent (1000件超含む), Rule_loader (保存・読込往復), Fsevents のユニットテストが test/dune に追加され通過すること
 - [ ] #3 Daemon の E2E 統合テスト（一時ディレクトリで起動→ファイル追加/変更/削除→IPC クエリ検証→stop）が追加され通過すること
+- [ ] #4 test_preserve_timestamps が単体 lstat ではなく実際の内容読み取りまたはタイムスタンプ保持処理を含めて atime/mtime 保存を検証すること
+- [ ] #5 Interactive / Watcher / Ghost について、モック文字列だけでなく実プロセス・異常系を含む実動作テストが追加され通過すること
 <!-- AC:END -->

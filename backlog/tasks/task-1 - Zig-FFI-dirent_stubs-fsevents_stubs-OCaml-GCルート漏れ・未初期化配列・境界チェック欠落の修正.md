@@ -4,7 +4,7 @@ title: 'Zig FFI (dirent_stubs/fsevents_stubs): OCaml GCルート漏れ・未初�
 status: To Do
 assignee: []
 created_date: '2026-11-18T13:03:00Z'
-updated_date: '2026-11-18T14:28:00Z'
+updated_date: '2026-11-18T16:10:00Z'
 labels:
   - zig-ffi
   - memory-safety
@@ -39,4 +39,5 @@ Zig FFI スタブ内に OCaml 5 GC 安全性違反およびメモリ安全性上
 - [ ] #2 dirent_stubs.zig の caml_readdir_batch / caml_readdir_bulk_stat で確保直後の配列スロットが Val_unit 等で初期化された上で後続アロケーションを行うこと
 - [ ] #3 readdir エラーパスで strdup 済みメモリが確実に free されること
 - [ ] #4 getattrlistbulk の異常終了ハンドリングおよび attrBuf パースの境界・NUL終端チェックが実装されていること
+- [ ] #5 fsevents_stubs.zig で stop 後の再 start 時に初期化済み mutex が再初期化されず、複数回の start/stop サイクルが安全に動作すること
 <!-- AC:END -->
